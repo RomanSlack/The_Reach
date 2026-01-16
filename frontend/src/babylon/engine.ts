@@ -10,7 +10,8 @@ export async function createEngine(canvas: HTMLCanvasElement): Promise<Engine> {
       });
       await engine.initAsync();
       console.log('Using WebGPU renderer');
-      return engine;
+      // WebGPUEngine extends ThinEngine but implements Engine interface at runtime
+      return engine as unknown as Engine;
     } catch (e) {
       console.warn('WebGPU init failed, falling back to WebGL:', e);
     }

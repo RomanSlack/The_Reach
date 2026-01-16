@@ -1,5 +1,5 @@
   1. Start Postgres:
-  docker-compose up -d
+  docker compose up -d
 
   2. Start Backend:
   cd backend

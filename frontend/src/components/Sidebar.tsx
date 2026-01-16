@@ -2,69 +2,144 @@ import { useState } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 
 export function Sidebar() {
-  const { projects, selectedProjectId, selectProject, addProject, loading } = useProjectStore();
+  const { projects, selectedProjectId, selectProject, startPlacement, cancelPlacement, placementMode, loading } = useProjectStore();
   const [newProjectName, setNewProjectName] = useState('');
 
-  const handleAddProject = async () => {
+  const handleStartPlacement = () => {
     if (!newProjectName.trim()) return;
-    await addProject(newProjectName.trim());
+    startPlacement(newProjectName.trim());
     setNewProjectName('');
   };
 
-  return (
-    <div className="absolute left-0 top-0 bottom-0 w-72 bg-black/80 backdrop-blur-md border-r border-white/10 flex flex-col">
-      <div className="p-4 border-b border-white/10">
-        <h1 className="text-xl font-bold text-white/90">The Reach</h1>
-        <p className="text-sm text-white/50">Project Command</p>
-      </div>
+  const handleCancelPlacement = () => {
+    cancelPlacement();
+  };
 
-      <div className="p-4 border-b border-white/10">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newProjectName}
-            onChange={(e) => setNewProjectName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddProject()}
-            placeholder="New project..."
-            className="flex-1 bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-indigo-500"
-          />
-          <button
-            onClick={handleAddProject}
-            className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm font-medium transition-colors"
-          >
-            +
-          </button>
+  return (
+    <div className="absolute left-4 top-4 bottom-4 w-72 bg-white/90 backdrop-blur-xl rounded-2xl border border-[#e8e4df] flex flex-col shadow-lg shadow-black/5 overflow-hidden">
+      {/* Header */}
+      <div className="p-5 border-b border-[#e8e4df]/60">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#d4a574] to-[#c9976a] flex items-center justify-center">
+            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold text-[#1a1a1a] tracking-tight">The Reach</h1>
+            <p className="text-xs text-[#8a857f] font-medium">Project Command</p>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
-        {loading && (
-          <div className="text-white/50 text-sm p-2">Loading...</div>
-        )}
-        {projects.map((project) => (
-          <button
-            key={project.id}
-            onClick={() => selectProject(project.id === selectedProjectId ? null : project.id)}
-            className={`w-full text-left p-3 rounded-lg mb-1 transition-all ${
-              project.id === selectedProjectId
-                ? 'bg-white/10 border border-white/20'
-                : 'hover:bg-white/5 border border-transparent'
-            }`}
-          >
-            <div className="flex items-center gap-3">
+      {/* Add Project */}
+      <div className="p-4 border-b border-[#e8e4df]/60">
+        {placementMode.active ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 p-3 bg-[#fef8f0] rounded-xl border border-[#f0d9b5]">
               <div
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: project.color }}
+                className="w-4 h-4 rounded-full animate-pulse"
+                style={{ backgroundColor: placementMode.color }}
               />
-              <span className="text-white/90 font-medium">{project.name}</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-[#1a1a1a]">{placementMode.name}</p>
+                <p className="text-xs text-[#8a857f]">Click on the map to place</p>
+              </div>
             </div>
-          </button>
-        ))}
-        {projects.length === 0 && !loading && (
-          <div className="text-white/30 text-sm p-4 text-center">
-            No projects yet. Create one above.
+            <button
+              onClick={handleCancelPlacement}
+              className="w-full py-2 px-4 bg-[#f0ebe5] hover:bg-[#e8e3dd] text-[#8a857f] rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleStartPlacement()}
+              placeholder="New project..."
+              className="flex-1 bg-[#f8f6f4] border-0 rounded-xl px-4 py-2.5 text-sm text-[#1a1a1a] placeholder:text-[#b5b0aa] focus:outline-none focus:ring-2 focus:ring-[#d4a574]/30 transition-all"
+            />
+            <button
+              onClick={handleStartPlacement}
+              disabled={!newProjectName.trim()}
+              className="w-10 h-10 bg-[#d4a574] hover:bg-[#c9976a] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-lg font-medium transition-all hover:scale-105 active:scale-95 flex items-center justify-center"
+            >
+              +
+            </button>
           </div>
         )}
+      </div>
+
+      {/* Project List */}
+      <div className="flex-1 overflow-y-auto p-3">
+        {loading && (
+          <div className="flex items-center justify-center py-8">
+            <svg className="w-5 h-5 animate-spin text-[#d4a574]" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        )}
+
+        <div className="space-y-1">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              onClick={() => selectProject(project.id === selectedProjectId ? null : project.id)}
+              className={`w-full text-left p-3 rounded-xl transition-all group ${
+                project.id === selectedProjectId
+                  ? 'bg-[#f0ebe5] shadow-sm'
+                  : 'hover:bg-[#f8f6f4]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-3 h-3 rounded-full ring-2 ring-white shadow-sm transition-transform group-hover:scale-110"
+                  style={{ backgroundColor: project.color }}
+                />
+                <span className="text-[#1a1a1a] font-medium text-sm">{project.name}</span>
+                {project.id === selectedProjectId && (
+                  <svg className="w-4 h-4 text-[#d4a574] ml-auto" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {projects.length === 0 && !loading && (
+          <div className="text-center py-12">
+            <div className="w-12 h-12 rounded-2xl bg-[#f0ebe5] mx-auto mb-3 flex items-center justify-center">
+              <svg className="w-6 h-6 text-[#b5b0aa]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </div>
+            <p className="text-[#8a857f] text-sm font-medium">No projects yet</p>
+            <p className="text-[#b5b0aa] text-xs mt-1">Create your first project above</p>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t border-[#e8e4df]/60 bg-[#faf9f7]/50">
+        <div className="flex items-center gap-2 text-xs text-[#8a857f] flex-wrap">
+          <kbd className="px-1.5 py-0.5 bg-[#f0ebe5] rounded text-[10px] font-mono">W A S D</kbd>
+          <span>pan</span>
+          <span className="mx-0.5">·</span>
+          <kbd className="px-1.5 py-0.5 bg-[#f0ebe5] rounded text-[10px] font-mono">Scroll</kbd>
+          <span>zoom</span>
+          <span className="mx-0.5">·</span>
+          <kbd className="px-1.5 py-0.5 bg-[#f0ebe5] rounded text-[10px] font-mono">ESC</kbd>
+          <span>cancel</span>
+        </div>
       </div>
     </div>
   );
