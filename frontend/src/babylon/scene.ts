@@ -45,11 +45,11 @@ export function createReachScene(
   onProjectMove?: (projectId: number, x: number, z: number) => void
 ): ReachScene {
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.85, 0.9, 0.92, 1);
-  scene.ambientColor = new Color3(0.4, 0.4, 0.4);
+  scene.clearColor = new Color4(0.3, 0.55, 0.85, 1); // Blue sky
+  scene.ambientColor = new Color3(0.5, 0.5, 0.5);
   scene.fogMode = Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.002;
-  scene.fogColor = new Color3(0.85, 0.9, 0.88);
+  scene.fogDensity = 0.0006; // Light fog
+  scene.fogColor = new Color3(0.4, 0.6, 0.85); // Blue fog matching sky
 
   // ===========================================
   // STRATEGIC CAMERA
@@ -63,7 +63,7 @@ export function createReachScene(
     scene
   );
   camera.lowerRadiusLimit = 15;
-  camera.upperRadiusLimit = 150;
+  camera.upperRadiusLimit = 300;
   camera.lowerBetaLimit = 0.2;
   camera.upperBetaLimit = Math.PI / 3;
   camera.wheelPrecision = 10;
@@ -131,19 +131,20 @@ export function createReachScene(
   // LIGHTING
   // ===========================================
   const ambientLight = new HemisphericLight('ambient', new Vector3(0, 1, 0), scene);
-  ambientLight.intensity = 0.5;
-  ambientLight.groundColor = new Color3(0.4, 0.5, 0.4);
+  ambientLight.intensity = 0.55; // Good ambient so objects aren't too dark
+  ambientLight.groundColor = new Color3(0.4, 0.45, 0.5);
   ambientLight.diffuse = new Color3(1, 0.98, 0.95);
 
   const sunLight = new DirectionalLight('sun', new Vector3(-0.5, -1, -0.3).normalize(), scene);
-  sunLight.intensity = 0.9;
-  sunLight.diffuse = new Color3(1, 0.97, 0.9);
+  sunLight.intensity = 1.3; // Harsher sun
+  sunLight.diffuse = new Color3(1, 0.95, 0.85);
+  sunLight.specular = new Color3(1, 0.98, 0.9);
   sunLight.position = new Vector3(50, 100, 50);
 
   const shadowGenerator = new ShadowGenerator(2048, sunLight);
   shadowGenerator.useBlurExponentialShadowMap = true;
-  shadowGenerator.blurScale = 2;
-  shadowGenerator.setDarkness(0.3);
+  shadowGenerator.blurScale = 1; // Sharper shadows
+  shadowGenerator.setDarkness(0.55); // Darker shadows
 
   // ===========================================
   // POST-PROCESSING
@@ -235,7 +236,7 @@ export function createReachScene(
   ground.receiveShadows = true;
 
   // ===========================================
-  // SKY
+  // SKY WITH SUN AND CLOUDS
   // ===========================================
   const sky = MeshBuilder.CreateSphere('sky', { diameter: 1000, sideOrientation: Mesh.BACKSIDE }, scene);
   const skyMat = new StandardMaterial('skyMat', scene);
@@ -243,14 +244,14 @@ export function createReachScene(
   skyMat.disableLighting = true;
 
   const skyTexture = new DynamicTexture('skyTex', { width: 1, height: 256 }, scene);
-  const ctx = skyTexture.getContext();
-  const gradient = ctx.createLinearGradient(0, 0, 0, 256);
-  gradient.addColorStop(0, '#e8ebe5');
-  gradient.addColorStop(0.4, '#c5d4dc');
-  gradient.addColorStop(0.7, '#9bb8c9');
-  gradient.addColorStop(1, '#7aa3b8');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 1, 256);
+  const skyCtx = skyTexture.getContext();
+  const gradient = skyCtx.createLinearGradient(0, 0, 0, 256);
+  gradient.addColorStop(0, '#1a5fc4');    // Deep blue at top
+  gradient.addColorStop(0.4, '#2e7ad9');  // Medium blue
+  gradient.addColorStop(0.7, '#4a9ae8');  // Sky blue
+  gradient.addColorStop(1, '#5aacf0');    // Still blue at horizon
+  skyCtx.fillStyle = gradient;
+  skyCtx.fillRect(0, 0, 1, 256);
   skyTexture.update();
 
   skyMat.emissiveTexture = skyTexture;
@@ -259,35 +260,252 @@ export function createReachScene(
   sky.infiniteDistance = true;
   sky.rotation.x = Math.PI;
 
+  // Sun
+  const sun = MeshBuilder.CreateSphere('sun', { diameter: 40 }, scene);
+  const sunMat = new StandardMaterial('sunMat', scene);
+  sunMat.emissiveColor = new Color3(1, 0.95, 0.7);
+  sunMat.disableLighting = true;
+  sun.material = sunMat;
+  sun.position = new Vector3(150, 200, -100);
+  glowLayer.addIncludedOnlyMesh(sun);
+  glowLayer.customEmissiveColorSelector = (mesh, _subMesh, _material, result) => {
+    if (mesh === sun) {
+      result.set(1, 0.9, 0.5, 1);
+    }
+  };
+
+  // Clouds - fluffy low-poly style
+  const clouds: Mesh[] = [];
+  const cloudMat = new StandardMaterial('cloudMat', scene);
+  cloudMat.diffuseColor = new Color3(1, 1, 1);
+  cloudMat.emissiveColor = new Color3(0.85, 0.88, 0.95);
+  cloudMat.alpha = 0.5; // More transparent
+  cloudMat.disableLighting = true;
+  cloudMat.backFaceCulling = false;
+
+  function createCloud(x: number, y: number, z: number, scale: number) {
+    const cloudParent = new Mesh('cloud', scene);
+    cloudParent.position = new Vector3(x, y, z);
+
+    // Cloud shape - flatter, wider, more natural cumulus shape
+    // Bottom layer - wide and flat
+    const bottomPuffs = [
+      { x: 0, y: 0, z: 0, size: 18, scaleY: 0.5 },
+      { x: -12, y: -1, z: 3, size: 14, scaleY: 0.45 },
+      { x: 10, y: -1, z: -2, size: 15, scaleY: 0.5 },
+      { x: -6, y: -1, z: -8, size: 12, scaleY: 0.4 },
+      { x: 8, y: -1, z: 6, size: 13, scaleY: 0.45 },
+    ];
+
+    // Middle layer - medium bumps
+    const middlePuffs = [
+      { x: -4, y: 5, z: 0, size: 14, scaleY: 0.7 },
+      { x: 6, y: 4, z: 2, size: 12, scaleY: 0.65 },
+      { x: -8, y: 3, z: -4, size: 10, scaleY: 0.6 },
+      { x: 3, y: 4, z: -5, size: 11, scaleY: 0.65 },
+    ];
+
+    // Top layer - smaller rounded tops
+    const topPuffs = [
+      { x: 0, y: 8, z: 0, size: 10, scaleY: 0.8 },
+      { x: -5, y: 7, z: 2, size: 8, scaleY: 0.75 },
+      { x: 4, y: 6, z: -2, size: 7, scaleY: 0.7 },
+    ];
+
+    const allPuffs = [...bottomPuffs, ...middlePuffs, ...topPuffs];
+
+    allPuffs.forEach((puff, i) => {
+      const sphere = MeshBuilder.CreateSphere(`puff${i}`, {
+        diameter: puff.size * scale,
+        segments: 6, // Low poly
+      }, scene);
+      sphere.position = new Vector3(
+        puff.x * scale + (Math.random() - 0.5) * 3 * scale,
+        puff.y * scale,
+        puff.z * scale + (Math.random() - 0.5) * 3 * scale
+      );
+      sphere.scaling.y = puff.scaleY;
+      sphere.scaling.x = 1 + (Math.random() - 0.5) * 0.2;
+      sphere.scaling.z = 1 + (Math.random() - 0.5) * 0.2;
+      sphere.material = cloudMat;
+      sphere.parent = cloudParent;
+    });
+
+    clouds.push(cloudParent);
+    return cloudParent;
+  }
+
+  // Spawn clouds - lower altitude so visible when zoomed out
+  for (let i = 0; i < 12; i++) {
+    const x = (Math.random() - 0.5) * 600;
+    const y = 40 + Math.random() * 35;
+    const z = (Math.random() - 0.5) * 600;
+    const scale = 0.4 + Math.random() * 0.5;
+    createCloud(x, y, z, scale);
+  }
+
+  // Animate clouds
+  let cloudTime = 0;
+  scene.onBeforeRenderObservable.add(() => {
+    cloudTime += 0.0005;
+    clouds.forEach((cloud, i) => {
+      cloud.position.x += 0.02 + (i % 3) * 0.01;
+      if (cloud.position.x > 350) {
+        cloud.position.x = -350;
+      }
+    });
+  });
+
+  // ===========================================
+  // CLOUD SHADOWS VIA NOISE TEXTURE (proper implementation)
+  // ===========================================
+  // Create a large plane high up that casts shadows using animated noise texture
+
+  // Import and create noise texture for clouds
+  const cloudNoiseTexture = new DynamicTexture('cloudNoise', 512, scene);
+  const noiseCtx = cloudNoiseTexture.getContext() as CanvasRenderingContext2D;
+
+  // Generate cloud noise pattern
+  function generateCloudNoise(offsetX: number, offsetY: number) {
+    const imgData = noiseCtx.createImageData(512, 512);
+    const data = imgData.data;
+
+    for (let y = 0; y < 512; y++) {
+      for (let x = 0; x < 512; x++) {
+        const i = (y * 512 + x) * 4;
+
+        // Multi-octave noise for cloud-like pattern
+        const nx = (x + offsetX) * 0.008;
+        const ny = (y + offsetY) * 0.008;
+
+        let noise = 0;
+        noise += Math.sin(nx * 3 + ny * 2) * 0.5 + 0.5;
+        noise += (Math.sin(nx * 7 + ny * 5) * 0.5 + 0.5) * 0.5;
+        noise += (Math.sin(nx * 13 + ny * 11) * 0.5 + 0.5) * 0.25;
+        noise /= 1.75;
+
+        // Threshold to create cloud shapes
+        const threshold = 0.45;
+        const alpha = noise > threshold ? Math.min((noise - threshold) * 3, 1) * 0.4 : 0;
+
+        data[i] = 0;     // R
+        data[i + 1] = 0; // G
+        data[i + 2] = 0; // B
+        data[i + 3] = alpha * 255; // A
+      }
+    }
+
+    noiseCtx.putImageData(imgData, 0, 0);
+    cloudNoiseTexture.update();
+  }
+
+  // Initial generation
+  let cloudOffsetX = 0;
+  let cloudOffsetY = 0;
+  generateCloudNoise(0, 0);
+  cloudNoiseTexture.hasAlpha = true;
+
+  // Create shadow-casting plane high above the scene
+  const cloudShadowPlane = MeshBuilder.CreatePlane('cloudShadowPlane', {
+    size: 600
+  }, scene);
+  cloudShadowPlane.rotation.x = Math.PI / 2;
+  cloudShadowPlane.position.y = 80; // High up, below the light
+  cloudShadowPlane.isVisible = false; // Invisible but casts shadows
+
+  const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
+  cloudShadowMat.opacityTexture = cloudNoiseTexture;
+  cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
+  cloudShadowMat.backFaceCulling = false;
+  cloudShadowPlane.material = cloudShadowMat;
+
+  // Enable transparent shadows
+  shadowGenerator.transparencyShadow = true;
+  shadowGenerator.enableSoftTransparentShadow = true;
+  shadowGenerator.addShadowCaster(cloudShadowPlane);
+
+  // Animate cloud shadows by regenerating noise with offset
+  let lastNoiseUpdate = 0;
+  scene.onBeforeRenderObservable.add(() => {
+    cloudOffsetX += 0.3; // Slow drift speed
+    cloudOffsetY += 0.1;
+
+    // Update noise texture periodically (not every frame for performance)
+    const now = performance.now();
+    if (now - lastNoiseUpdate > 100) { // Update every 100ms
+      generateCloudNoise(cloudOffsetX, cloudOffsetY);
+      lastNoiseUpdate = now;
+    }
+  });
+
   // ===========================================
   // ENVIRONMENT: TREES, ROCKS, RIVER
   // ===========================================
   const environmentParent = new TransformNode('environment', scene);
 
-  // Create simple tree (conforms to terrain height)
+  // Create detailed deciduous tree (conforms to terrain height)
   function createTree(x: number, z: number, scale: number = 1) {
     const terrainY = getTerrainHeight(x, z);
+    const treeParent = new TransformNode('tree', scene);
+    treeParent.position = new Vector3(x, terrainY, z);
+    treeParent.parent = environmentParent;
 
-    const trunk = MeshBuilder.CreateCylinder('trunk', { height: 3 * scale, diameter: 0.5 * scale }, scene);
-    trunk.position = new Vector3(x, terrainY + 1.5 * scale, z);
+    // Trunk with slight taper
+    const trunk = MeshBuilder.CreateCylinder('trunk', {
+      height: 3.5 * scale,
+      diameterTop: 0.35 * scale,
+      diameterBottom: 0.6 * scale,
+    }, scene);
+    trunk.position = new Vector3(0, 1.75 * scale, 0);
     const trunkMat = new StandardMaterial('trunkMat', scene);
-    trunkMat.diffuseColor = new Color3(0.4, 0.3, 0.2);
+    trunkMat.diffuseColor = new Color3(0.35 + Math.random() * 0.1, 0.25 + Math.random() * 0.05, 0.15);
     trunk.material = trunkMat;
     shadowGenerator.addShadowCaster(trunk);
     trunk.receiveShadows = true;
-    trunk.parent = environmentParent;
+    trunk.parent = treeParent;
 
-    const foliage = MeshBuilder.CreateSphere('foliage', { diameter: 4 * scale, segments: 8 }, scene);
-    foliage.position = new Vector3(x, terrainY + 4.5 * scale, z);
-    foliage.scaling = new Vector3(1, 1.3, 1);
+    // Create foliage color for this tree
+    const foliageColor = new Color3(
+      0.25 + Math.random() * 0.15,
+      0.45 + Math.random() * 0.2,
+      0.2 + Math.random() * 0.1
+    );
     const foliageMat = new StandardMaterial('foliageMat', scene);
-    foliageMat.diffuseColor = new Color3(0.3 + Math.random() * 0.15, 0.5 + Math.random() * 0.15, 0.25);
-    foliage.material = foliageMat;
-    shadowGenerator.addShadowCaster(foliage);
-    foliage.receiveShadows = true;
-    foliage.parent = environmentParent;
+    foliageMat.diffuseColor = foliageColor;
 
-    return { trunk, foliage };
+    // Main canopy - cluster of overlapping spheres
+    const canopyConfig = [
+      { y: 4.5, size: 2.8, xOff: 0, zOff: 0 },      // Center top
+      { y: 3.8, size: 2.5, xOff: 1.2, zOff: 0.5 },  // Right
+      { y: 3.8, size: 2.3, xOff: -1.0, zOff: 0.8 }, // Left
+      { y: 3.6, size: 2.4, xOff: 0.3, zOff: -1.1 }, // Back
+      { y: 3.2, size: 2.0, xOff: -0.8, zOff: -0.6 },// Lower back-left
+      { y: 4.0, size: 1.8, xOff: 0.8, zOff: -0.8 }, // Upper back-right
+    ];
+
+    canopyConfig.forEach((cfg, i) => {
+      const foliage = MeshBuilder.CreateSphere(`foliage${i}`, {
+        diameter: cfg.size * scale,
+        segments: 6,
+      }, scene);
+      foliage.position = new Vector3(
+        cfg.xOff * scale,
+        cfg.y * scale,
+        cfg.zOff * scale
+      );
+      // Slight random scaling for organic look
+      foliage.scaling = new Vector3(
+        0.9 + Math.random() * 0.2,
+        0.85 + Math.random() * 0.3,
+        0.9 + Math.random() * 0.2
+      );
+      foliage.material = foliageMat;
+      shadowGenerator.addShadowCaster(foliage);
+      foliage.receiveShadows = true;
+      foliage.parent = treeParent;
+    });
+
+    return treeParent;
   }
 
   // Create rock (conforms to terrain height)
@@ -306,10 +524,83 @@ export function createReachScene(
     return rock;
   }
 
-  // Scatter trees (avoid river)
-  for (let i = 0; i < 60; i++) {
+  // Create pine tree (conforms to terrain height)
+  function createPineTree(x: number, z: number, scale: number = 1) {
+    const terrainY = getTerrainHeight(x, z);
+
+    // Trunk
+    const trunk = MeshBuilder.CreateCylinder('pineTrunk', { height: 4 * scale, diameter: 0.4 * scale }, scene);
+    trunk.position = new Vector3(x, terrainY + 2 * scale, z);
+    const trunkMat = new StandardMaterial('pineTrunkMat', scene);
+    trunkMat.diffuseColor = new Color3(0.35, 0.25, 0.15);
+    trunk.material = trunkMat;
+    shadowGenerator.addShadowCaster(trunk);
+    trunk.receiveShadows = true;
+    trunk.parent = environmentParent;
+
+    // Stacked cones for pine foliage
+    const coneHeights = [2.5, 2, 1.5];
+    const coneDiameters = [3, 2.2, 1.4];
+    const coneYOffsets = [3, 4.5, 5.8];
+
+    coneHeights.forEach((h, i) => {
+      const cone = MeshBuilder.CreateCylinder(`pineFoliage${i}`, {
+        height: h * scale,
+        diameterTop: 0,
+        diameterBottom: coneDiameters[i] * scale,
+        tessellation: 8,
+      }, scene);
+      cone.position = new Vector3(x, terrainY + coneYOffsets[i] * scale, z);
+      const foliageMat = new StandardMaterial(`pineFoliageMat${i}`, scene);
+      foliageMat.diffuseColor = new Color3(0.15 + Math.random() * 0.1, 0.35 + Math.random() * 0.1, 0.15);
+      cone.material = foliageMat;
+      shadowGenerator.addShadowCaster(cone);
+      cone.receiveShadows = true;
+      cone.parent = environmentParent;
+    });
+
+    return { trunk };
+  }
+
+  // Create bush (conforms to terrain height)
+  function createBush(x: number, z: number, scale: number = 1) {
+    const terrainY = getTerrainHeight(x, z);
+
+    // Multiple small spheres clustered together
+    const bushParent = new TransformNode('bush', scene);
+    bushParent.position = new Vector3(x, terrainY, z);
+    bushParent.parent = environmentParent;
+
+    const puffCount = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < puffCount; i++) {
+      const puff = MeshBuilder.CreateSphere('bushPuff', {
+        diameter: (0.8 + Math.random() * 0.6) * scale,
+        segments: 6,
+      }, scene);
+      puff.position = new Vector3(
+        (Math.random() - 0.5) * 1.2 * scale,
+        0.4 * scale + Math.random() * 0.3 * scale,
+        (Math.random() - 0.5) * 1.2 * scale
+      );
+      const bushMat = new StandardMaterial('bushMat', scene);
+      bushMat.diffuseColor = new Color3(
+        0.25 + Math.random() * 0.15,
+        0.45 + Math.random() * 0.15,
+        0.2 + Math.random() * 0.1
+      );
+      puff.material = bushMat;
+      shadowGenerator.addShadowCaster(puff);
+      puff.receiveShadows = true;
+      puff.parent = bushParent;
+    }
+
+    return bushParent;
+  }
+
+  // Scatter regular deciduous trees (avoid river) - forest density
+  for (let i = 0; i < 200; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 40 + Math.random() * 150;
+    const radius = 25 + Math.random() * 170;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
 
@@ -317,13 +608,67 @@ export function createReachScene(
     const distToRiv = distanceToRiver(x, z, riverPath);
     if (distToRiv < riverConfig.width * 2.5) continue;
 
-    createTree(x, z, 0.8 + Math.random() * 0.6);
+    createTree(x, z, 0.6 + Math.random() * 0.7);
+  }
+
+  // Scatter pine trees - heavy forest coverage
+  for (let i = 0; i < 180; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 30 + Math.random() * 175;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+
+    // Skip if too close to river
+    const distToRiv = distanceToRiver(x, z, riverPath);
+    if (distToRiv < riverConfig.width * 2.5) continue;
+
+    createPineTree(x, z, 0.5 + Math.random() * 0.7);
+  }
+
+  // Dense tree clusters (groups of trees close together)
+  for (let cluster = 0; cluster < 15; cluster++) {
+    const clusterAngle = Math.random() * Math.PI * 2;
+    const clusterRadius = 60 + Math.random() * 120;
+    const clusterX = Math.cos(clusterAngle) * clusterRadius;
+    const clusterZ = Math.sin(clusterAngle) * clusterRadius;
+
+    // Skip cluster if in river
+    const distToRiv = distanceToRiver(clusterX, clusterZ, riverPath);
+    if (distToRiv < riverConfig.width * 3) continue;
+
+    // Add 5-10 trees in this cluster
+    const treesInCluster = 5 + Math.floor(Math.random() * 6);
+    for (let t = 0; t < treesInCluster; t++) {
+      const offsetX = clusterX + (Math.random() - 0.5) * 15;
+      const offsetZ = clusterZ + (Math.random() - 0.5) * 15;
+
+      // Mix of tree types in cluster
+      if (Math.random() > 0.4) {
+        createPineTree(offsetX, offsetZ, 0.5 + Math.random() * 0.5);
+      } else {
+        createTree(offsetX, offsetZ, 0.5 + Math.random() * 0.5);
+      }
+    }
+  }
+
+  // Scatter bushes (everywhere except river) - underbrush
+  for (let i = 0; i < 150; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 15 + Math.random() * 180;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+
+    // Skip if in river
+    const distToRiv = distanceToRiver(x, z, riverPath);
+    if (distToRiv < riverConfig.width * 1.5) continue;
+
+    createBush(x, z, 0.5 + Math.random() * 0.9);
   }
 
   // Scatter rocks (can be near river banks)
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 70; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 30 + Math.random() * 160;
+    const radius = 20 + Math.random() * 175;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
 
@@ -331,11 +676,11 @@ export function createReachScene(
     const distToRiv = distanceToRiver(x, z, riverPath);
     if (distToRiv < riverConfig.width) continue;
 
-    createRock(x, z, 0.5 + Math.random() * 1);
+    createRock(x, z, 0.4 + Math.random() * 1.2);
   }
 
-  // River water surface - simple flat plane at water level
-  const riverWaterLevel = -riverConfig.depth * 0.3; // Water level slightly above riverbed
+  // River water surface with animated flow
+  const riverWaterLevel = -riverConfig.depth * 0.3;
 
   const river = MeshBuilder.CreateRibbon('river', {
     pathArray: [
@@ -345,13 +690,52 @@ export function createReachScene(
     sideOrientation: Mesh.DOUBLESIDE,
   }, scene);
 
-  const riverMat = new PBRMaterial('riverMat', scene);
-  riverMat.albedoColor = new Color3(0.2, 0.4, 0.5);
-  riverMat.metallic = 0.1;
-  riverMat.roughness = 0.2;
-  riverMat.alpha = 0.8;
+  // Create subtle water texture
+  const waterTexSize = 256;
+  const waterTexture = new DynamicTexture('waterTex', waterTexSize, scene);
+  const waterCtx = waterTexture.getContext() as CanvasRenderingContext2D;
+
+  // Draw subtle ripple pattern - lighter, more transparent feel
+  waterCtx.fillStyle = 'rgba(70, 130, 160, 0.6)';
+  waterCtx.fillRect(0, 0, waterTexSize, waterTexSize);
+
+  // Soft ripple highlights
+  waterCtx.strokeStyle = 'rgba(150, 200, 220, 0.3)';
+  waterCtx.lineWidth = 1;
+  for (let i = 0; i < 30; i++) {
+    waterCtx.beginPath();
+    const y = (i / 30) * waterTexSize;
+    waterCtx.moveTo(0, y);
+    for (let x = 0; x < waterTexSize; x += 8) {
+      waterCtx.lineTo(x, y + Math.sin((x + i * 15) * 0.08) * 4);
+    }
+    waterCtx.stroke();
+  }
+  waterTexture.update();
+
+  // Transparent, natural water material
+  const riverMat = new StandardMaterial('riverMat', scene);
+  riverMat.diffuseTexture = waterTexture;
+  (riverMat.diffuseTexture as Texture).uScale = 8;
+  (riverMat.diffuseTexture as Texture).vScale = 2;
+  riverMat.diffuseColor = new Color3(0.45, 0.6, 0.65); // Lighter, more natural
+  riverMat.specularColor = new Color3(0.8, 0.85, 0.9); // Bright specular for sun reflection
+  riverMat.specularPower = 64;
+  riverMat.alpha = 0.55; // More transparent
   riverMat.backFaceCulling = false;
+  riverMat.emissiveColor = new Color3(0.02, 0.05, 0.08); // Subtle glow
+
   river.material = riverMat;
+
+  // Animate water flow
+  let waterOffset = 0;
+  scene.onBeforeRenderObservable.add(() => {
+    waterOffset += 0.004;
+    if (riverMat.diffuseTexture) {
+      (riverMat.diffuseTexture as Texture).uOffset = waterOffset;
+      (riverMat.diffuseTexture as Texture).vOffset = Math.sin(waterOffset * 2) * 0.01;
+    }
+  });
 
   // ===========================================
   // PROJECT ISLANDS
