@@ -1042,64 +1042,107 @@ export function createReachScene(
   // ===========================================
   // RIVER
   // ===========================================
-  // River water surface with animated flow
-  const riverWaterLevel = -riverConfig.depth * 0.3;
+  // River water surface - flat across width (water finds its level)
+  // but follows the riverbed depth along its length
+
+  const riverWidthFactor = 0.8; // How much of the carved width to fill with water
+  const waterFillLevel = 0.7; // How full the river is (0-1, where 1 = full to banks)
+
+  // Calculate water level at each point along the river center
+  // Water is FLAT across width at each point, but follows river depth along length
+  const riverWaterLevels = riverPath.map(p => {
+    // Get the deepest point (river center)
+    const centerDepth = getTerrainHeight(p.x, p.z);
+    // Get the bank height (edge of river)
+    const bankHeight = getTerrainHeight(p.x, p.z + riverConfig.width);
+    // Water level is between riverbed and bank, based on fill level
+    return centerDepth + (bankHeight - centerDepth) * waterFillLevel;
+  });
+
+  // Create two edge paths with FLAT water surface across width
+  const leftBank = riverPath.map((p, i) =>
+    new Vector3(p.x, riverWaterLevels[i], p.z - riverConfig.width * riverWidthFactor)
+  );
+  const rightBank = riverPath.map((p, i) =>
+    new Vector3(p.x, riverWaterLevels[i], p.z + riverConfig.width * riverWidthFactor)
+  );
 
   const river = MeshBuilder.CreateRibbon('river', {
-    pathArray: [
-      riverPath.map(p => new Vector3(p.x, riverWaterLevel, p.z - riverConfig.width * 0.7)),
-      riverPath.map(p => new Vector3(p.x, riverWaterLevel, p.z + riverConfig.width * 0.7)),
-    ],
+    pathArray: [leftBank, rightBank],
     sideOrientation: Mesh.DOUBLESIDE,
   }, scene);
 
-  // Create subtle water texture
+  // Offset slightly down to prevent z-fighting with terrain
+  river.position.y = -0.05;
+
+  // Simple flowing water with visible animation
+  const riverMat = new StandardMaterial('riverMat', scene);
+
+  // Water color - semi-transparent blue
+  riverMat.diffuseColor = new Color3(0.3, 0.5, 0.6);
+  riverMat.specularColor = new Color3(0.6, 0.7, 0.8);
+  riverMat.specularPower = 64;
+  riverMat.alpha = 0.65;
+  riverMat.backFaceCulling = false;
+
+  // Create simple flow texture with visible streaks
   const waterTexSize = 256;
-  const waterTexture = new DynamicTexture('waterTex', waterTexSize, scene);
+  const waterTexture = new DynamicTexture('waterTex', waterTexSize, scene, false);
   const waterCtx = waterTexture.getContext() as CanvasRenderingContext2D;
 
-  // Draw subtle ripple pattern - lighter, more transparent feel
-  waterCtx.fillStyle = 'rgba(70, 130, 160, 0.6)';
+  // Light blue-green base
+  waterCtx.fillStyle = '#5a9ab0';
   waterCtx.fillRect(0, 0, waterTexSize, waterTexSize);
 
-  // Soft ripple highlights
-  waterCtx.strokeStyle = 'rgba(150, 200, 220, 0.3)';
-  waterCtx.lineWidth = 1;
-  for (let i = 0; i < 30; i++) {
+  // Flow lines - white/light streaks going horizontally
+  for (let i = 0; i < 60; i++) {
+    const y = Math.random() * waterTexSize;
+    const x = Math.random() * waterTexSize;
+    const length = 20 + Math.random() * 60;
+
+    const gradient = waterCtx.createLinearGradient(x, y, x + length, y);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    gradient.addColorStop(0.3, 'rgba(200, 230, 245, 0.4)');
+    gradient.addColorStop(0.7, 'rgba(200, 230, 245, 0.4)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    waterCtx.strokeStyle = gradient;
+    waterCtx.lineWidth = 1 + Math.random() * 2;
     waterCtx.beginPath();
-    const y = (i / 30) * waterTexSize;
-    waterCtx.moveTo(0, y);
-    for (let x = 0; x < waterTexSize; x += 8) {
-      waterCtx.lineTo(x, y + Math.sin((x + i * 15) * 0.08) * 4);
-    }
+    waterCtx.moveTo(x, y);
+    waterCtx.lineTo(x + length, y + (Math.random() - 0.5) * 4);
     waterCtx.stroke();
   }
+
+  // Small highlight spots
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * waterTexSize;
+    const y = Math.random() * waterTexSize;
+    waterCtx.fillStyle = `rgba(220, 240, 255, ${0.2 + Math.random() * 0.2})`;
+    waterCtx.beginPath();
+    waterCtx.arc(x, y, 1 + Math.random() * 3, 0, Math.PI * 2);
+    waterCtx.fill();
+  }
+
   waterTexture.update();
 
-  // Transparent, natural water material using PBR
-  const riverMat = new PBRMaterial('riverMat', scene);
-  riverMat.albedoTexture = waterTexture;
-  (riverMat.albedoTexture as Texture).uScale = 8;
-  (riverMat.albedoTexture as Texture).vScale = 2;
-  riverMat.albedoColor = new Color3(0.35, 0.55, 0.6);
-  riverMat.metallic = 0.0;
-  riverMat.roughness = 0.15; // Smooth for reflections
-  riverMat.alpha = 0.6;
-  riverMat.backFaceCulling = false;
-  riverMat.subSurface.isRefractionEnabled = true;
-  riverMat.subSurface.refractionIntensity = 0.4;
-  riverMat.subSurface.tintColor = new Color3(0.3, 0.5, 0.55);
-  riverMat.emissiveColor = new Color3(0.02, 0.04, 0.06);
+  riverMat.diffuseTexture = waterTexture;
+  (riverMat.diffuseTexture as Texture).uScale = 10;
+  (riverMat.diffuseTexture as Texture).vScale = 4;
+  (riverMat.diffuseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
+  (riverMat.diffuseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
+
+  // Slight emissive for that water glow
+  riverMat.emissiveColor = new Color3(0.05, 0.1, 0.12);
 
   river.material = riverMat;
 
-  // Animate water flow
+  // Animate water flow - slow and steady
   let waterOffset = 0;
   scene.onBeforeRenderObservable.add(() => {
-    waterOffset += 0.004;
-    if (riverMat.albedoTexture) {
-      (riverMat.albedoTexture as Texture).uOffset = waterOffset;
-      (riverMat.albedoTexture as Texture).vOffset = Math.sin(waterOffset * 2) * 0.01;
+    waterOffset += 0.002; // Slow flow speed
+    if (riverMat.diffuseTexture) {
+      (riverMat.diffuseTexture as Texture).uOffset = waterOffset;
     }
   });
 
