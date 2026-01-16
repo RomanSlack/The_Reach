@@ -25,8 +25,10 @@ import {
   Quaternion,
   CubeTexture,
   SSAO2RenderingPipeline,
+  PostProcess,
+  Effect,
 } from '@babylonjs/core';
-import { GrassProceduralTexture } from '@babylonjs/procedural-textures';
+// GrassProceduralTexture removed - using custom noise-based texture instead
 import '@babylonjs/loaders/glTF';
 import type { Project } from '../api/client';
 import { generateRiverPath, generateTerrainHeight, distanceToRiver } from './terrain';
@@ -213,6 +215,90 @@ export function createReachScene(
   curves.shadowsSaturation = 10;
 
   // ===========================================
+  // STYLIZED EDGE DETECTION SHADER
+  // ===========================================
+  // Custom post-process for subtle outlines that emphasize low-poly geometry
+
+  // Register the custom shader
+  Effect.ShadersStore['edgeDetectionFragmentShader'] = `
+    precision highp float;
+
+    varying vec2 vUV;
+    uniform sampler2D textureSampler;
+    uniform sampler2D depthSampler;
+    uniform vec2 screenSize;
+    uniform float edgeStrength;
+    uniform float depthThreshold;
+    uniform vec3 edgeColor;
+
+    void main(void) {
+      vec2 texelSize = 1.0 / screenSize;
+
+      // Sample depth values in a 3x3 kernel
+      float d00 = texture2D(depthSampler, vUV + vec2(-texelSize.x, -texelSize.y)).r;
+      float d10 = texture2D(depthSampler, vUV + vec2(0.0, -texelSize.y)).r;
+      float d20 = texture2D(depthSampler, vUV + vec2(texelSize.x, -texelSize.y)).r;
+      float d01 = texture2D(depthSampler, vUV + vec2(-texelSize.x, 0.0)).r;
+      float d21 = texture2D(depthSampler, vUV + vec2(texelSize.x, 0.0)).r;
+      float d02 = texture2D(depthSampler, vUV + vec2(-texelSize.x, texelSize.y)).r;
+      float d12 = texture2D(depthSampler, vUV + vec2(0.0, texelSize.y)).r;
+      float d22 = texture2D(depthSampler, vUV + vec2(texelSize.x, texelSize.y)).r;
+
+      // Sobel edge detection on depth
+      float sobelX = d00 + 2.0 * d01 + d02 - d20 - 2.0 * d21 - d22;
+      float sobelY = d00 + 2.0 * d10 + d20 - d02 - 2.0 * d12 - d22;
+      float depthEdge = sqrt(sobelX * sobelX + sobelY * sobelY);
+
+      // Also detect edges based on color differences for detail
+      vec3 c00 = texture2D(textureSampler, vUV + vec2(-texelSize.x, -texelSize.y)).rgb;
+      vec3 c10 = texture2D(textureSampler, vUV + vec2(0.0, -texelSize.y)).rgb;
+      vec3 c20 = texture2D(textureSampler, vUV + vec2(texelSize.x, -texelSize.y)).rgb;
+      vec3 c01 = texture2D(textureSampler, vUV + vec2(-texelSize.x, 0.0)).rgb;
+      vec3 c21 = texture2D(textureSampler, vUV + vec2(texelSize.x, 0.0)).rgb;
+      vec3 c02 = texture2D(textureSampler, vUV + vec2(-texelSize.x, texelSize.y)).rgb;
+      vec3 c12 = texture2D(textureSampler, vUV + vec2(0.0, texelSize.y)).rgb;
+      vec3 c22 = texture2D(textureSampler, vUV + vec2(texelSize.x, texelSize.y)).rgb;
+
+      vec3 sobelXColor = c00 + 2.0 * c01 + c02 - c20 - 2.0 * c21 - c22;
+      vec3 sobelYColor = c00 + 2.0 * c10 + c20 - c02 - 2.0 * c12 - c22;
+      float colorEdge = length(sobelXColor) + length(sobelYColor);
+
+      // Combine depth and color edges
+      float edge = max(depthEdge * 50.0, colorEdge * 0.5);
+      edge = smoothstep(depthThreshold, depthThreshold + 0.3, edge);
+
+      // Get original color
+      vec4 color = texture2D(textureSampler, vUV);
+
+      // Blend edge color (subtle dark outline)
+      vec3 finalColor = mix(color.rgb, edgeColor, edge * edgeStrength);
+
+      gl_FragColor = vec4(finalColor, color.a);
+    }
+  `;
+
+  // Enable depth renderer for edge detection
+  const depthRenderer = scene.enableDepthRenderer(camera, false);
+
+  // Create the edge detection post-process
+  const edgeDetection = new PostProcess(
+    'edgeDetection',
+    'edgeDetection',
+    ['screenSize', 'edgeStrength', 'depthThreshold', 'edgeColor'],
+    ['depthSampler'],
+    1.0,
+    camera
+  );
+
+  edgeDetection.onApply = (effect) => {
+    effect.setFloat2('screenSize', edgeDetection.width, edgeDetection.height);
+    effect.setFloat('edgeStrength', 0.4); // Subtle edges
+    effect.setFloat('depthThreshold', 0.15);
+    effect.setColor3('edgeColor', new Color3(0.15, 0.12, 0.1)); // Warm dark brown
+    effect.setTexture('depthSampler', depthRenderer.getDepthMap());
+  };
+
+  // ===========================================
   // GLOW & HIGHLIGHT
   // ===========================================
   const glowLayer = new GlowLayer('glow', scene, { mainTextureFixedSize: 512, blurKernelSize: 32 });
@@ -264,22 +350,116 @@ export function createReachScene(
     ground.createNormals(true);
   }
 
-  // Grass material
+  // Grass material with custom non-repeating shader
   const grassMat = new PBRMaterial('grassMat', scene);
-  grassMat.albedoColor = new Color3(0.45, 0.55, 0.35);
   grassMat.metallic = 0;
   grassMat.roughness = 0.95;
 
-  // Grass texture - higher detail
-  const grassTexture = new GrassProceduralTexture('grassTex', 1024, scene);
-  grassTexture.grassColors = [
-    new Color3(0.4, 0.55, 0.3),
-    new Color3(0.45, 0.6, 0.35),
-    new Color3(0.5, 0.65, 0.4),
+  // Create a large procedural texture using noise for seamless, non-repetitive grass
+  const grassNoiseTexture = new DynamicTexture('grassNoise', 2048, scene, true);
+  const grassCtx = grassNoiseTexture.getContext() as CanvasRenderingContext2D;
+
+  // Noise function for texture generation
+  const noise2D = (x: number, y: number, seed: number = 0): number => {
+    const n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
+    return n - Math.floor(n);
+  };
+
+  // Fractal noise for natural variation
+  const fbmNoise = (x: number, y: number, octaves: number = 6): number => {
+    let value = 0;
+    let amplitude = 1;
+    let frequency = 1;
+    let maxValue = 0;
+    for (let i = 0; i < octaves; i++) {
+      // Smoother interpolated noise
+      const ix = Math.floor(x * frequency);
+      const iy = Math.floor(y * frequency);
+      const fx = x * frequency - ix;
+      const fy = y * frequency - iy;
+      const smoothFx = fx * fx * (3 - 2 * fx);
+      const smoothFy = fy * fy * (3 - 2 * fy);
+
+      const n00 = noise2D(ix, iy, i);
+      const n10 = noise2D(ix + 1, iy, i);
+      const n01 = noise2D(ix, iy + 1, i);
+      const n11 = noise2D(ix + 1, iy + 1, i);
+
+      const nx0 = n00 + smoothFx * (n10 - n00);
+      const nx1 = n01 + smoothFx * (n11 - n01);
+      const n = nx0 + smoothFy * (nx1 - nx0);
+
+      value += n * amplitude;
+      maxValue += amplitude;
+      amplitude *= 0.5;
+      frequency *= 2;
+    }
+    return value / maxValue;
+  };
+
+  // Generate the grass texture with varied colors
+  const imageData = grassCtx.createImageData(2048, 2048);
+  const data = imageData.data;
+
+  // Base grass colors
+  const grassColors = [
+    { r: 95, g: 130, b: 70 },   // Dark grass
+    { r: 110, g: 150, b: 85 },  // Medium grass
+    { r: 125, g: 165, b: 95 },  // Light grass
+    { r: 100, g: 140, b: 75 },  // Variation
   ];
-  (grassTexture as Texture).uScale = 60;
-  (grassTexture as Texture).vScale = 60;
-  grassMat.albedoTexture = grassTexture;
+
+  for (let y = 0; y < 2048; y++) {
+    for (let x = 0; x < 2048; x++) {
+      const idx = (y * 2048 + x) * 4;
+
+      // Large scale variation (patches of different grass)
+      const largeNoise = fbmNoise(x / 300, y / 300, 4);
+      // Medium scale variation
+      const medNoise = fbmNoise(x / 50, y / 50, 4);
+      // Fine detail - higher frequency for sharper look
+      const fineNoise = fbmNoise(x / 8, y / 8, 3);
+      // Extra fine detail for texture
+      const microNoise = fbmNoise(x / 3, y / 3, 2);
+
+      // Combine noise layers - more weight on fine details
+      const combined = largeNoise * 0.35 + medNoise * 0.35 + fineNoise * 0.2 + microNoise * 0.1;
+
+      // Select color based on noise
+      const colorIdx = Math.floor(combined * grassColors.length) % grassColors.length;
+      const nextColorIdx = (colorIdx + 1) % grassColors.length;
+      const blend = (combined * grassColors.length) % 1;
+
+      const c1 = grassColors[colorIdx];
+      const c2 = grassColors[nextColorIdx];
+
+      // Smooth blend between colors
+      let r = c1.r + blend * (c2.r - c1.r);
+      let g = c1.g + blend * (c2.g - c1.g);
+      let b = c1.b + blend * (c2.b - c1.b);
+
+      // Add fine detail variation - stronger effect
+      const detail = (fineNoise - 0.5) * 35 + (microNoise - 0.5) * 15;
+      r = Math.max(0, Math.min(255, r + detail));
+      g = Math.max(0, Math.min(255, g + detail));
+      b = Math.max(0, Math.min(255, b + detail));
+
+      data[idx] = r;
+      data[idx + 1] = g;
+      data[idx + 2] = b;
+      data[idx + 3] = 255;
+    }
+  }
+  grassCtx.putImageData(imageData, 0, 0);
+  grassNoiseTexture.update();
+
+  // Higher UV scale for sharper, more detailed appearance
+  (grassNoiseTexture as Texture).uScale = 25;
+  (grassNoiseTexture as Texture).vScale = 25;
+  (grassNoiseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
+  (grassNoiseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
+  grassMat.albedoTexture = grassNoiseTexture;
+  grassMat.albedoColor = new Color3(1.0, 1.0, 1.0); // Let texture define color
 
   ground.material = grassMat;
   ground.receiveShadows = true;
@@ -534,7 +714,7 @@ export function createReachScene(
   rockMat.ambientColor = new Color3(0.15, 0.14, 0.13);
 
   // ===========================================
-  // DECIDUOUS TREE TEMPLATE (merged mesh)
+  // DECIDUOUS TREE TEMPLATE (merged mesh with detailed canopy)
   // ===========================================
   // Note: For thin instances, template position is ignored - offset is baked into matrices
   const treeTrunkTemplate = MeshBuilder.CreateCylinder('treeTrunk', {
@@ -547,14 +727,65 @@ export function createReachScene(
   treeTrunkTemplate.material = trunkMat;
   treeTrunkTemplate.isVisible = false;
 
-  const treeFoliageTemplate = MeshBuilder.CreateSphere('treeFoliage', {
-    diameter: 4.5,
-    segments: 6
-  }, scene);
-  treeFoliageTemplate.scaling = new Vector3(1.2, 1, 1.2);
-  treeFoliageTemplate.bakeCurrentTransformIntoVertices();
-  treeFoliageTemplate.material = foliageMat;
-  treeFoliageTemplate.isVisible = false;
+  // Create detailed canopy from multiple merged spheres (like clouds)
+  // This creates an organic, fluffy tree shape while still being a single mesh for instancing
+  const canopyPuffs: Mesh[] = [];
+
+  // Main central mass
+  const mainPuff = MeshBuilder.CreateSphere('puff0', { diameter: 3.2, segments: 6 }, scene);
+  mainPuff.position = new Vector3(0, 0, 0);
+  mainPuff.scaling = new Vector3(1, 0.85, 1);
+  canopyPuffs.push(mainPuff);
+
+  // Upper puffs - creates the rounded top
+  const upperPuff1 = MeshBuilder.CreateSphere('puff1', { diameter: 2.5, segments: 5 }, scene);
+  upperPuff1.position = new Vector3(0, 1.2, 0);
+  canopyPuffs.push(upperPuff1);
+
+  const upperPuff2 = MeshBuilder.CreateSphere('puff2', { diameter: 2.0, segments: 5 }, scene);
+  upperPuff2.position = new Vector3(0.8, 1.0, 0.3);
+  canopyPuffs.push(upperPuff2);
+
+  const upperPuff3 = MeshBuilder.CreateSphere('puff3', { diameter: 1.8, segments: 5 }, scene);
+  upperPuff3.position = new Vector3(-0.6, 1.1, -0.4);
+  canopyPuffs.push(upperPuff3);
+
+  // Side puffs - creates width and organic shape
+  const sidePuff1 = MeshBuilder.CreateSphere('puff4', { diameter: 2.4, segments: 5 }, scene);
+  sidePuff1.position = new Vector3(1.3, 0.2, 0);
+  sidePuff1.scaling = new Vector3(1, 0.8, 0.9);
+  canopyPuffs.push(sidePuff1);
+
+  const sidePuff2 = MeshBuilder.CreateSphere('puff5', { diameter: 2.2, segments: 5 }, scene);
+  sidePuff2.position = new Vector3(-1.2, 0.1, 0.3);
+  sidePuff2.scaling = new Vector3(0.9, 0.85, 1);
+  canopyPuffs.push(sidePuff2);
+
+  const sidePuff3 = MeshBuilder.CreateSphere('puff6', { diameter: 2.3, segments: 5 }, scene);
+  sidePuff3.position = new Vector3(0.2, 0, 1.2);
+  sidePuff3.scaling = new Vector3(0.95, 0.8, 1);
+  canopyPuffs.push(sidePuff3);
+
+  const sidePuff4 = MeshBuilder.CreateSphere('puff7', { diameter: 2.1, segments: 5 }, scene);
+  sidePuff4.position = new Vector3(-0.3, 0.15, -1.1);
+  sidePuff4.scaling = new Vector3(1, 0.85, 0.9);
+  canopyPuffs.push(sidePuff4);
+
+  // Lower edge puffs - fills out the bottom silhouette
+  const lowerPuff1 = MeshBuilder.CreateSphere('puff8', { diameter: 1.8, segments: 5 }, scene);
+  lowerPuff1.position = new Vector3(0.9, -0.5, 0.8);
+  canopyPuffs.push(lowerPuff1);
+
+  const lowerPuff2 = MeshBuilder.CreateSphere('puff9', { diameter: 1.6, segments: 5 }, scene);
+  lowerPuff2.position = new Vector3(-0.8, -0.4, -0.7);
+  canopyPuffs.push(lowerPuff2);
+
+  // Merge all puffs into single foliage mesh
+  const treeFoliageTemplate = Mesh.MergeMeshes(canopyPuffs, true, true, undefined, false, true);
+  if (treeFoliageTemplate) {
+    treeFoliageTemplate.material = foliageMat;
+    treeFoliageTemplate.isVisible = false;
+  }
 
   // ===========================================
   // PINE TREE TEMPLATES
