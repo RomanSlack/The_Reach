@@ -21,6 +21,8 @@ import {
   DynamicTexture,
   TransformNode,
   Texture,
+  Matrix,
+  Quaternion,
 } from '@babylonjs/core';
 import { GrassProceduralTexture } from '@babylonjs/procedural-textures';
 import '@babylonjs/loaders/glTF';
@@ -439,246 +441,310 @@ export function createReachScene(
   });
 
   // ===========================================
-  // ENVIRONMENT: TREES, ROCKS, RIVER
+  // ENVIRONMENT: INSTANCED VEGETATION (High Performance)
   // ===========================================
-  const environmentParent = new TransformNode('environment', scene);
+  // Using Thin Instances for massive performance gains
+  // Instead of 1000s of draw calls, we get ~10 draw calls total
 
-  // Create detailed deciduous tree (conforms to terrain height)
-  function createTree(x: number, z: number, scale: number = 1) {
-    const terrainY = getTerrainHeight(x, z);
-    const treeParent = new TransformNode('tree', scene);
-    treeParent.position = new Vector3(x, terrainY, z);
-    treeParent.parent = environmentParent;
+  // Shared materials (reused across all instances)
+  const trunkMat = new StandardMaterial('trunkMat', scene);
+  trunkMat.diffuseColor = new Color3(0.4, 0.28, 0.18);
+  trunkMat.specularColor = new Color3(0.1, 0.1, 0.1);
 
-    // Trunk with slight taper
-    const trunk = MeshBuilder.CreateCylinder('trunk', {
-      height: 3.5 * scale,
-      diameterTop: 0.35 * scale,
-      diameterBottom: 0.6 * scale,
-    }, scene);
-    trunk.position = new Vector3(0, 1.75 * scale, 0);
-    const trunkMat = new StandardMaterial('trunkMat', scene);
-    trunkMat.diffuseColor = new Color3(0.35 + Math.random() * 0.1, 0.25 + Math.random() * 0.05, 0.15);
-    trunk.material = trunkMat;
-    shadowGenerator.addShadowCaster(trunk);
-    trunk.receiveShadows = true;
-    trunk.parent = treeParent;
+  const foliageMat = new StandardMaterial('foliageMat', scene);
+  foliageMat.diffuseColor = new Color3(0.3, 0.5, 0.25);
+  foliageMat.specularColor = new Color3(0.1, 0.15, 0.1);
 
-    // Create foliage color for this tree
-    const foliageColor = new Color3(
-      0.25 + Math.random() * 0.15,
-      0.45 + Math.random() * 0.2,
-      0.2 + Math.random() * 0.1
-    );
-    const foliageMat = new StandardMaterial('foliageMat', scene);
-    foliageMat.diffuseColor = foliageColor;
+  const pineFoliageMat = new StandardMaterial('pineFoliageMat', scene);
+  pineFoliageMat.diffuseColor = new Color3(0.18, 0.38, 0.18);
+  pineFoliageMat.specularColor = new Color3(0.1, 0.12, 0.1);
 
-    // Main canopy - cluster of overlapping spheres
-    const canopyConfig = [
-      { y: 4.5, size: 2.8, xOff: 0, zOff: 0 },      // Center top
-      { y: 3.8, size: 2.5, xOff: 1.2, zOff: 0.5 },  // Right
-      { y: 3.8, size: 2.3, xOff: -1.0, zOff: 0.8 }, // Left
-      { y: 3.6, size: 2.4, xOff: 0.3, zOff: -1.1 }, // Back
-      { y: 3.2, size: 2.0, xOff: -0.8, zOff: -0.6 },// Lower back-left
-      { y: 4.0, size: 1.8, xOff: 0.8, zOff: -0.8 }, // Upper back-right
-    ];
+  const bushMat = new StandardMaterial('bushMat', scene);
+  bushMat.diffuseColor = new Color3(0.32, 0.48, 0.25);
+  bushMat.specularColor = new Color3(0.1, 0.12, 0.1);
 
-    canopyConfig.forEach((cfg, i) => {
-      const foliage = MeshBuilder.CreateSphere(`foliage${i}`, {
-        diameter: cfg.size * scale,
-        segments: 6,
-      }, scene);
-      foliage.position = new Vector3(
-        cfg.xOff * scale,
-        cfg.y * scale,
-        cfg.zOff * scale
-      );
-      // Slight random scaling for organic look
-      foliage.scaling = new Vector3(
-        0.9 + Math.random() * 0.2,
-        0.85 + Math.random() * 0.3,
-        0.9 + Math.random() * 0.2
-      );
-      foliage.material = foliageMat;
-      shadowGenerator.addShadowCaster(foliage);
-      foliage.receiveShadows = true;
-      foliage.parent = treeParent;
-    });
+  const rockMat = new StandardMaterial('rockMat', scene);
+  rockMat.diffuseColor = new Color3(0.52, 0.5, 0.48);
+  rockMat.specularColor = new Color3(0.2, 0.2, 0.2);
 
-    return treeParent;
+  // ===========================================
+  // DECIDUOUS TREE TEMPLATE (merged mesh)
+  // ===========================================
+  // Note: For thin instances, template position is ignored - offset is baked into matrices
+  const treeTrunkTemplate = MeshBuilder.CreateCylinder('treeTrunk', {
+    height: 3.5,
+    diameterTop: 0.35,
+    diameterBottom: 0.6,
+    tessellation: 8
+  }, scene);
+  treeTrunkTemplate.bakeCurrentTransformIntoVertices(); // Bake at origin
+  treeTrunkTemplate.material = trunkMat;
+  treeTrunkTemplate.isVisible = false;
+
+  const treeFoliageTemplate = MeshBuilder.CreateSphere('treeFoliage', {
+    diameter: 4.5,
+    segments: 6
+  }, scene);
+  treeFoliageTemplate.scaling = new Vector3(1.2, 1, 1.2);
+  treeFoliageTemplate.bakeCurrentTransformIntoVertices();
+  treeFoliageTemplate.material = foliageMat;
+  treeFoliageTemplate.isVisible = false;
+
+  // ===========================================
+  // PINE TREE TEMPLATES
+  // ===========================================
+  const pineTrunkTemplate = MeshBuilder.CreateCylinder('pineTrunk', {
+    height: 4,
+    diameter: 0.4,
+    tessellation: 8
+  }, scene);
+  pineTrunkTemplate.bakeCurrentTransformIntoVertices();
+  pineTrunkTemplate.material = trunkMat;
+  pineTrunkTemplate.isVisible = false;
+
+  // Single merged pine foliage (3 cones merged) - position baked into merged mesh
+  const pineCone1 = MeshBuilder.CreateCylinder('cone1', { height: 2.5, diameterTop: 0, diameterBottom: 3, tessellation: 8 }, scene);
+  pineCone1.position.y = 1; // Relative to trunk top (at 2 + offset)
+  const pineCone2 = MeshBuilder.CreateCylinder('cone2', { height: 2, diameterTop: 0, diameterBottom: 2.2, tessellation: 8 }, scene);
+  pineCone2.position.y = 2.5;
+  const pineCone3 = MeshBuilder.CreateCylinder('cone3', { height: 1.5, diameterTop: 0, diameterBottom: 1.4, tessellation: 8 }, scene);
+  pineCone3.position.y = 3.8;
+
+  const pineFoliageTemplate = Mesh.MergeMeshes([pineCone1, pineCone2, pineCone3], true, true, undefined, false, true);
+  if (pineFoliageTemplate) {
+    pineFoliageTemplate.material = pineFoliageMat;
+    pineFoliageTemplate.isVisible = false;
   }
 
-  // Create rock (conforms to terrain height)
-  function createRock(x: number, z: number, scale: number = 1) {
-    const terrainY = getTerrainHeight(x, z);
+  // ===========================================
+  // BUSH TEMPLATE
+  // ===========================================
+  const bushTemplate = MeshBuilder.CreateSphere('bush', {
+    diameter: 1.2,
+    segments: 5
+  }, scene);
+  bushTemplate.scaling = new Vector3(1.3, 0.8, 1.3);
+  bushTemplate.bakeCurrentTransformIntoVertices();
+  bushTemplate.material = bushMat;
+  bushTemplate.isVisible = false;
 
-    const rock = MeshBuilder.CreatePolyhedron('rock', { type: 1, size: scale }, scene);
-    rock.position = new Vector3(x, terrainY + scale * 0.3, z);
-    rock.rotation = new Vector3(Math.random() * 0.5, Math.random() * Math.PI * 2, Math.random() * 0.5);
-    const rockMat = new StandardMaterial('rockMat', scene);
-    rockMat.diffuseColor = new Color3(0.5 + Math.random() * 0.1, 0.5 + Math.random() * 0.1, 0.48);
-    rock.material = rockMat;
-    shadowGenerator.addShadowCaster(rock);
-    rock.receiveShadows = true;
-    rock.parent = environmentParent;
-    return rock;
+  // ===========================================
+  // ROCK TEMPLATE
+  // ===========================================
+  const rockTemplate = MeshBuilder.CreatePolyhedron('rock', { type: 1, size: 1 }, scene);
+  rockTemplate.bakeCurrentTransformIntoVertices();
+  rockTemplate.material = rockMat;
+  rockTemplate.isVisible = false;
+
+  // ===========================================
+  // COLLECT INSTANCE POSITIONS
+  // ===========================================
+  interface InstanceData {
+    x: number;
+    z: number;
+    scale: number;
+    rotY: number;
   }
 
-  // Create pine tree (conforms to terrain height)
-  function createPineTree(x: number, z: number, scale: number = 1) {
-    const terrainY = getTerrainHeight(x, z);
+  const treePositions: InstanceData[] = [];
+  const pinePositions: InstanceData[] = [];
+  const bushPositions: InstanceData[] = [];
+  const rockPositions: InstanceData[] = [];
 
-    // Trunk
-    const trunk = MeshBuilder.CreateCylinder('pineTrunk', { height: 4 * scale, diameter: 0.4 * scale }, scene);
-    trunk.position = new Vector3(x, terrainY + 2 * scale, z);
-    const trunkMat = new StandardMaterial('pineTrunkMat', scene);
-    trunkMat.diffuseColor = new Color3(0.35, 0.25, 0.15);
-    trunk.material = trunkMat;
-    shadowGenerator.addShadowCaster(trunk);
-    trunk.receiveShadows = true;
-    trunk.parent = environmentParent;
+  // Helper to check river distance
+  const isValidPosition = (x: number, z: number, minDist: number) => {
+    return distanceToRiver(x, z, riverPath) >= riverConfig.width * minDist;
+  };
 
-    // Stacked cones for pine foliage
-    const coneHeights = [2.5, 2, 1.5];
-    const coneDiameters = [3, 2.2, 1.4];
-    const coneYOffsets = [3, 4.5, 5.8];
-
-    coneHeights.forEach((h, i) => {
-      const cone = MeshBuilder.CreateCylinder(`pineFoliage${i}`, {
-        height: h * scale,
-        diameterTop: 0,
-        diameterBottom: coneDiameters[i] * scale,
-        tessellation: 8,
-      }, scene);
-      cone.position = new Vector3(x, terrainY + coneYOffsets[i] * scale, z);
-      const foliageMat = new StandardMaterial(`pineFoliageMat${i}`, scene);
-      foliageMat.diffuseColor = new Color3(0.15 + Math.random() * 0.1, 0.35 + Math.random() * 0.1, 0.15);
-      cone.material = foliageMat;
-      shadowGenerator.addShadowCaster(cone);
-      cone.receiveShadows = true;
-      cone.parent = environmentParent;
-    });
-
-    return { trunk };
-  }
-
-  // Create bush (conforms to terrain height)
-  function createBush(x: number, z: number, scale: number = 1) {
-    const terrainY = getTerrainHeight(x, z);
-
-    // Multiple small spheres clustered together
-    const bushParent = new TransformNode('bush', scene);
-    bushParent.position = new Vector3(x, terrainY, z);
-    bushParent.parent = environmentParent;
-
-    const puffCount = 3 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < puffCount; i++) {
-      const puff = MeshBuilder.CreateSphere('bushPuff', {
-        diameter: (0.8 + Math.random() * 0.6) * scale,
-        segments: 6,
-      }, scene);
-      puff.position = new Vector3(
-        (Math.random() - 0.5) * 1.2 * scale,
-        0.4 * scale + Math.random() * 0.3 * scale,
-        (Math.random() - 0.5) * 1.2 * scale
-      );
-      const bushMat = new StandardMaterial('bushMat', scene);
-      bushMat.diffuseColor = new Color3(
-        0.25 + Math.random() * 0.15,
-        0.45 + Math.random() * 0.15,
-        0.2 + Math.random() * 0.1
-      );
-      puff.material = bushMat;
-      shadowGenerator.addShadowCaster(puff);
-      puff.receiveShadows = true;
-      puff.parent = bushParent;
-    }
-
-    return bushParent;
-  }
-
-  // Scatter regular deciduous trees (avoid river) - forest density
-  for (let i = 0; i < 200; i++) {
+  // Collect deciduous tree positions
+  for (let i = 0; i < 250; i++) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 25 + Math.random() * 170;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-
-    // Skip if too close to river
-    const distToRiv = distanceToRiver(x, z, riverPath);
-    if (distToRiv < riverConfig.width * 2.5) continue;
-
-    createTree(x, z, 0.6 + Math.random() * 0.7);
+    if (isValidPosition(x, z, 2.5)) {
+      treePositions.push({ x, z, scale: 0.6 + Math.random() * 0.7, rotY: Math.random() * Math.PI * 2 });
+    }
   }
 
-  // Scatter pine trees - heavy forest coverage
-  for (let i = 0; i < 180; i++) {
+  // Collect pine tree positions
+  for (let i = 0; i < 220; i++) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 30 + Math.random() * 175;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-
-    // Skip if too close to river
-    const distToRiv = distanceToRiver(x, z, riverPath);
-    if (distToRiv < riverConfig.width * 2.5) continue;
-
-    createPineTree(x, z, 0.5 + Math.random() * 0.7);
+    if (isValidPosition(x, z, 2.5)) {
+      pinePositions.push({ x, z, scale: 0.5 + Math.random() * 0.7, rotY: Math.random() * Math.PI * 2 });
+    }
   }
 
-  // Dense tree clusters (groups of trees close together)
-  for (let cluster = 0; cluster < 15; cluster++) {
+  // Tree clusters
+  for (let cluster = 0; cluster < 20; cluster++) {
     const clusterAngle = Math.random() * Math.PI * 2;
     const clusterRadius = 60 + Math.random() * 120;
     const clusterX = Math.cos(clusterAngle) * clusterRadius;
     const clusterZ = Math.sin(clusterAngle) * clusterRadius;
+    if (!isValidPosition(clusterX, clusterZ, 3)) continue;
 
-    // Skip cluster if in river
-    const distToRiv = distanceToRiver(clusterX, clusterZ, riverPath);
-    if (distToRiv < riverConfig.width * 3) continue;
-
-    // Add 5-10 trees in this cluster
     const treesInCluster = 5 + Math.floor(Math.random() * 6);
     for (let t = 0; t < treesInCluster; t++) {
-      const offsetX = clusterX + (Math.random() - 0.5) * 15;
-      const offsetZ = clusterZ + (Math.random() - 0.5) * 15;
-
-      // Mix of tree types in cluster
+      const x = clusterX + (Math.random() - 0.5) * 15;
+      const z = clusterZ + (Math.random() - 0.5) * 15;
+      const scale = 0.5 + Math.random() * 0.5;
+      const rotY = Math.random() * Math.PI * 2;
       if (Math.random() > 0.4) {
-        createPineTree(offsetX, offsetZ, 0.5 + Math.random() * 0.5);
+        pinePositions.push({ x, z, scale, rotY });
       } else {
-        createTree(offsetX, offsetZ, 0.5 + Math.random() * 0.5);
+        treePositions.push({ x, z, scale, rotY });
       }
     }
   }
 
-  // Scatter bushes (everywhere except river) - underbrush
-  for (let i = 0; i < 150; i++) {
+  // Collect bush positions
+  for (let i = 0; i < 200; i++) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 15 + Math.random() * 180;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-
-    // Skip if in river
-    const distToRiv = distanceToRiver(x, z, riverPath);
-    if (distToRiv < riverConfig.width * 1.5) continue;
-
-    createBush(x, z, 0.5 + Math.random() * 0.9);
+    if (isValidPosition(x, z, 1.5)) {
+      bushPositions.push({ x, z, scale: 0.5 + Math.random() * 0.9, rotY: Math.random() * Math.PI * 2 });
+    }
   }
 
-  // Scatter rocks (can be near river banks)
-  for (let i = 0; i < 70; i++) {
+  // Collect rock positions
+  for (let i = 0; i < 100; i++) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 20 + Math.random() * 175;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-
-    // Skip if in river
-    const distToRiv = distanceToRiver(x, z, riverPath);
-    if (distToRiv < riverConfig.width) continue;
-
-    createRock(x, z, 0.4 + Math.random() * 1.2);
+    if (isValidPosition(x, z, 1)) {
+      rockPositions.push({ x, z, scale: 0.4 + Math.random() * 1.2, rotY: Math.random() * Math.PI * 2 });
+    }
   }
 
+  // ===========================================
+  // CREATE THIN INSTANCES
+  // ===========================================
+  const tempMatrix = new Matrix();
+
+  // Deciduous tree trunks (trunk center at 1.75 units up)
+  const treeTrunkMatrices = new Float32Array(treePositions.length * 16);
+  treePositions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const trunkY = terrainY + 1.75 * pos.scale; // Trunk center offset
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale, pos.scale, pos.scale),
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, trunkY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(treeTrunkMatrices, i * 16);
+  });
+  treeTrunkTemplate.isVisible = true;
+  treeTrunkTemplate.thinInstanceSetBuffer('matrix', treeTrunkMatrices, 16);
+  treeTrunkTemplate.receiveShadows = true;
+  shadowGenerator.addShadowCaster(treeTrunkTemplate);
+
+  // Deciduous tree foliage (foliage center at 4.5 units up)
+  const treeFoliageMatrices = new Float32Array(treePositions.length * 16);
+  treePositions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const foliageY = terrainY + 4.5 * pos.scale; // Foliage center offset
+    const scaleVariation = 0.9 + Math.random() * 0.2;
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale * scaleVariation, pos.scale * (0.8 + Math.random() * 0.4), pos.scale * scaleVariation),
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, foliageY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(treeFoliageMatrices, i * 16);
+  });
+  treeFoliageTemplate.isVisible = true;
+  treeFoliageTemplate.thinInstanceSetBuffer('matrix', treeFoliageMatrices, 16);
+  treeFoliageTemplate.receiveShadows = true;
+  shadowGenerator.addShadowCaster(treeFoliageTemplate);
+
+  // Pine tree trunks (trunk center at 2 units up)
+  const pineTrunkMatrices = new Float32Array(pinePositions.length * 16);
+  pinePositions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const trunkY = terrainY + 2 * pos.scale; // Pine trunk center offset
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale, pos.scale, pos.scale),
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, trunkY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(pineTrunkMatrices, i * 16);
+  });
+  pineTrunkTemplate.isVisible = true;
+  pineTrunkTemplate.thinInstanceSetBuffer('matrix', pineTrunkMatrices, 16);
+  pineTrunkTemplate.receiveShadows = true;
+  shadowGenerator.addShadowCaster(pineTrunkTemplate);
+
+  // Pine tree foliage (foliage starts at trunk top, around 4 units up)
+  if (pineFoliageTemplate) {
+    const pineFoliageMatrices = new Float32Array(pinePositions.length * 16);
+    pinePositions.forEach((pos, i) => {
+      const terrainY = getTerrainHeight(pos.x, pos.z);
+      const foliageY = terrainY + 4 * pos.scale; // Pine foliage base offset
+      Matrix.ComposeToRef(
+        new Vector3(pos.scale, pos.scale, pos.scale),
+        Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+        new Vector3(pos.x, foliageY, pos.z),
+        tempMatrix
+      );
+      tempMatrix.copyToArray(pineFoliageMatrices, i * 16);
+    });
+    pineFoliageTemplate.isVisible = true;
+    pineFoliageTemplate.thinInstanceSetBuffer('matrix', pineFoliageMatrices, 16);
+    pineFoliageTemplate.receiveShadows = true;
+    shadowGenerator.addShadowCaster(pineFoliageTemplate);
+  }
+
+  // Bushes (center at ~0.5 units up)
+  const bushMatrices = new Float32Array(bushPositions.length * 16);
+  bushPositions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const bushY = terrainY + 0.5 * pos.scale; // Bush center offset
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale, pos.scale * 0.7, pos.scale),
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, bushY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(bushMatrices, i * 16);
+  });
+  bushTemplate.isVisible = true;
+  bushTemplate.thinInstanceSetBuffer('matrix', bushMatrices, 16);
+  bushTemplate.receiveShadows = true;
+  shadowGenerator.addShadowCaster(bushTemplate);
+
+  // Rocks (partially embedded in ground)
+  const rockMatrices = new Float32Array(rockPositions.length * 16);
+  rockPositions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const rockY = terrainY + pos.scale * 0.4; // Rock center offset (partially buried)
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale, pos.scale * 0.8, pos.scale),
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, rockY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(rockMatrices, i * 16);
+  });
+  rockTemplate.isVisible = true;
+  rockTemplate.thinInstanceSetBuffer('matrix', rockMatrices, 16);
+  rockTemplate.receiveShadows = true;
+  shadowGenerator.addShadowCaster(rockTemplate);
+
+  // Log performance info
+  console.log(`[Performance] Vegetation instances: ${treePositions.length} trees, ${pinePositions.length} pines, ${bushPositions.length} bushes, ${rockPositions.length} rocks`);
+  console.log(`[Performance] Draw calls reduced from ~${(treePositions.length * 7) + (pinePositions.length * 4) + (bushPositions.length * 4) + rockPositions.length} to ~6`);
+
+  // ===========================================
+  // RIVER
+  // ===========================================
   // River water surface with animated flow
   const riverWaterLevel = -riverConfig.depth * 0.3;
 
