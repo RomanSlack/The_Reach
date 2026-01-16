@@ -23,6 +23,8 @@ import {
   Texture,
   Matrix,
   Quaternion,
+  CubeTexture,
+  SSAO2RenderingPipeline,
 } from '@babylonjs/core';
 import { GrassProceduralTexture } from '@babylonjs/procedural-textures';
 import '@babylonjs/loaders/glTF';
@@ -130,46 +132,91 @@ export function createReachScene(
   });
 
   // ===========================================
-  // LIGHTING
+  // LIGHTING (Realistic with low-poly aesthetic)
   // ===========================================
+
+  // Ambient/fill light - soft blue from sky
   const ambientLight = new HemisphericLight('ambient', new Vector3(0, 1, 0), scene);
-  ambientLight.intensity = 0.55; // Good ambient so objects aren't too dark
-  ambientLight.groundColor = new Color3(0.4, 0.45, 0.5);
-  ambientLight.diffuse = new Color3(1, 0.98, 0.95);
+  ambientLight.intensity = 0.4;
+  ambientLight.groundColor = new Color3(0.25, 0.2, 0.15); // Warm ground bounce
+  ambientLight.diffuse = new Color3(0.7, 0.8, 1.0); // Cool sky light
 
+  // Main sun light - warm and strong
   const sunLight = new DirectionalLight('sun', new Vector3(-0.5, -1, -0.3).normalize(), scene);
-  sunLight.intensity = 1.3; // Harsher sun
-  sunLight.diffuse = new Color3(1, 0.95, 0.85);
+  sunLight.intensity = 1.8; // Strong sun for dramatic lighting
+  sunLight.diffuse = new Color3(1, 0.95, 0.8); // Warm sunlight
   sunLight.specular = new Color3(1, 0.98, 0.9);
-  sunLight.position = new Vector3(50, 100, 50);
+  sunLight.position = new Vector3(100, 150, 80);
 
-  const shadowGenerator = new ShadowGenerator(2048, sunLight);
-  shadowGenerator.useBlurExponentialShadowMap = true;
-  shadowGenerator.blurScale = 1; // Sharper shadows
-  shadowGenerator.setDarkness(0.55); // Darker shadows
+  // High quality shadows - soft and realistic
+  const shadowGenerator = new ShadowGenerator(4096, sunLight); // Higher res for quality
+  shadowGenerator.usePercentageCloserFiltering = true; // PCF for soft shadows
+  shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
+  shadowGenerator.bias = 0.001;
+  shadowGenerator.normalBias = 0.02;
+  shadowGenerator.setDarkness(0.4); // Not too dark
 
   // ===========================================
-  // POST-PROCESSING
+  // SSAO (Screen Space Ambient Occlusion)
+  // ===========================================
+  const ssao = new SSAO2RenderingPipeline('ssao', scene, {
+    ssaoRatio: 0.5, // Half resolution for performance
+    blurRatio: 1
+  }, [camera], true);
+  ssao.radius = 2.0; // AO radius
+  ssao.totalStrength = 1.2; // AO intensity
+  ssao.base = 0.1; // Base darkness
+  ssao.samples = 16; // Quality
+  ssao.maxZ = 250; // Max depth
+  ssao.minZAspect = 0.5;
+
+  // ===========================================
+  // POST-PROCESSING (Cinematic look)
   // ===========================================
   const pipeline = new DefaultRenderingPipeline('pipeline', true, scene, [camera]);
-  pipeline.bloomEnabled = true;
-  pipeline.bloomThreshold = 0.85;
-  pipeline.bloomWeight = 0.2;
-  pipeline.bloomKernel = 64;
+
+  // Anti-aliasing
   pipeline.fxaaEnabled = true;
-  pipeline.samples = 4;
+  pipeline.samples = 4; // MSAA
+
+  // Bloom - subtle glow on bright areas
+  pipeline.bloomEnabled = true;
+  pipeline.bloomThreshold = 0.75;
+  pipeline.bloomWeight = 0.3;
+  pipeline.bloomKernel = 64;
+  pipeline.bloomScale = 0.5;
+
+  // Sharpen - crisp low-poly edges
+  pipeline.sharpenEnabled = true;
+  pipeline.sharpen.edgeAmount = 0.3;
+  pipeline.sharpen.colorAmount = 1.0;
+
+  // Tone mapping and color grading
   pipeline.imageProcessingEnabled = true;
-  pipeline.imageProcessing.contrast = 1.05;
-  pipeline.imageProcessing.exposure = 1.0;
   pipeline.imageProcessing.toneMappingEnabled = true;
+  pipeline.imageProcessing.toneMappingType = 1; // ACES filmic
+  pipeline.imageProcessing.contrast = 1.15; // Punch up contrast
+  pipeline.imageProcessing.exposure = 1.1; // Slightly brighter
+
+  // Vignette - subtle darkening at edges
   pipeline.imageProcessing.vignetteEnabled = true;
-  pipeline.imageProcessing.vignetteWeight = 0.3;
+  pipeline.imageProcessing.vignetteWeight = 0.4;
+  pipeline.imageProcessing.vignetteStretch = 0.5;
+  pipeline.imageProcessing.vignetteColor = new Color4(0, 0, 0, 0);
+
+  // Color curves for that stylized look
+  pipeline.imageProcessing.colorCurvesEnabled = true;
+  const curves = pipeline.imageProcessing.colorCurves!;
+  curves.globalSaturation = 20; // Slightly more saturated
+  curves.highlightsSaturation = -10; // Desaturate highlights slightly
+  curves.shadowsHue = 20; // Warm shadows
+  curves.shadowsSaturation = 10;
 
   // ===========================================
   // GLOW & HIGHLIGHT
   // ===========================================
   const glowLayer = new GlowLayer('glow', scene, { mainTextureFixedSize: 512, blurKernelSize: 32 });
-  glowLayer.intensity = 0.15;
+  glowLayer.intensity = 0.2;
 
   const highlightLayer = new HighlightLayer('highlight', scene);
 
@@ -280,10 +327,12 @@ export function createReachScene(
   const clouds: Mesh[] = [];
   const cloudMat = new StandardMaterial('cloudMat', scene);
   cloudMat.diffuseColor = new Color3(1, 1, 1);
-  cloudMat.emissiveColor = new Color3(0.85, 0.88, 0.95);
-  cloudMat.alpha = 0.5; // More transparent
+  cloudMat.emissiveColor = new Color3(0.9, 0.92, 0.98);
+  cloudMat.alpha = 0.7;
   cloudMat.disableLighting = true;
-  cloudMat.backFaceCulling = false;
+  cloudMat.backFaceCulling = true; // Only render front faces
+  cloudMat.needDepthPrePass = true; // Fixes transparency sorting issues
+  cloudMat.separateCullingPass = true; // Better depth handling for overlapping transparent meshes
 
   function createCloud(x: number, y: number, z: number, scale: number) {
     const cloudParent = new Mesh('cloud', scene);
@@ -446,26 +495,43 @@ export function createReachScene(
   // Using Thin Instances for massive performance gains
   // Instead of 1000s of draw calls, we get ~10 draw calls total
 
-  // Shared materials (reused across all instances)
-  const trunkMat = new StandardMaterial('trunkMat', scene);
-  trunkMat.diffuseColor = new Color3(0.4, 0.28, 0.18);
-  trunkMat.specularColor = new Color3(0.1, 0.1, 0.1);
+  // Shared PBR materials (reused across all instances)
+  // Using PBR for realistic lighting response with low-poly geometry
 
-  const foliageMat = new StandardMaterial('foliageMat', scene);
-  foliageMat.diffuseColor = new Color3(0.3, 0.5, 0.25);
-  foliageMat.specularColor = new Color3(0.1, 0.15, 0.1);
+  // Tree trunk - rough bark with slight subsurface look
+  const trunkMat = new PBRMaterial('trunkMat', scene);
+  trunkMat.albedoColor = new Color3(0.35, 0.22, 0.12);
+  trunkMat.metallic = 0.0;
+  trunkMat.roughness = 0.95;
+  trunkMat.ambientColor = new Color3(0.15, 0.1, 0.05);
 
-  const pineFoliageMat = new StandardMaterial('pineFoliageMat', scene);
-  pineFoliageMat.diffuseColor = new Color3(0.18, 0.38, 0.18);
-  pineFoliageMat.specularColor = new Color3(0.1, 0.12, 0.1);
+  // Deciduous foliage - slightly translucent feel, very rough
+  const foliageMat = new PBRMaterial('foliageMat', scene);
+  foliageMat.albedoColor = new Color3(0.28, 0.48, 0.22);
+  foliageMat.metallic = 0.0;
+  foliageMat.roughness = 0.85;
+  foliageMat.ambientColor = new Color3(0.1, 0.18, 0.08);
 
-  const bushMat = new StandardMaterial('bushMat', scene);
-  bushMat.diffuseColor = new Color3(0.32, 0.48, 0.25);
-  bushMat.specularColor = new Color3(0.1, 0.12, 0.1);
+  // Pine foliage - darker, more matte
+  const pineFoliageMat = new PBRMaterial('pineFoliageMat', scene);
+  pineFoliageMat.albedoColor = new Color3(0.15, 0.32, 0.15);
+  pineFoliageMat.metallic = 0.0;
+  pineFoliageMat.roughness = 0.9;
+  pineFoliageMat.ambientColor = new Color3(0.05, 0.12, 0.05);
 
-  const rockMat = new StandardMaterial('rockMat', scene);
-  rockMat.diffuseColor = new Color3(0.52, 0.5, 0.48);
-  rockMat.specularColor = new Color3(0.2, 0.2, 0.2);
+  // Bush material - vibrant green
+  const bushMat = new PBRMaterial('bushMat', scene);
+  bushMat.albedoColor = new Color3(0.3, 0.45, 0.22);
+  bushMat.metallic = 0.0;
+  bushMat.roughness = 0.88;
+  bushMat.ambientColor = new Color3(0.1, 0.15, 0.07);
+
+  // Rock material - slightly reflective minerals
+  const rockMat = new PBRMaterial('rockMat', scene);
+  rockMat.albedoColor = new Color3(0.48, 0.46, 0.44);
+  rockMat.metallic = 0.05;
+  rockMat.roughness = 0.75;
+  rockMat.ambientColor = new Color3(0.15, 0.14, 0.13);
 
   // ===========================================
   // DECIDUOUS TREE TEMPLATE (merged mesh)
@@ -779,17 +845,20 @@ export function createReachScene(
   }
   waterTexture.update();
 
-  // Transparent, natural water material
-  const riverMat = new StandardMaterial('riverMat', scene);
-  riverMat.diffuseTexture = waterTexture;
-  (riverMat.diffuseTexture as Texture).uScale = 8;
-  (riverMat.diffuseTexture as Texture).vScale = 2;
-  riverMat.diffuseColor = new Color3(0.45, 0.6, 0.65); // Lighter, more natural
-  riverMat.specularColor = new Color3(0.8, 0.85, 0.9); // Bright specular for sun reflection
-  riverMat.specularPower = 64;
-  riverMat.alpha = 0.55; // More transparent
+  // Transparent, natural water material using PBR
+  const riverMat = new PBRMaterial('riverMat', scene);
+  riverMat.albedoTexture = waterTexture;
+  (riverMat.albedoTexture as Texture).uScale = 8;
+  (riverMat.albedoTexture as Texture).vScale = 2;
+  riverMat.albedoColor = new Color3(0.35, 0.55, 0.6);
+  riverMat.metallic = 0.0;
+  riverMat.roughness = 0.15; // Smooth for reflections
+  riverMat.alpha = 0.6;
   riverMat.backFaceCulling = false;
-  riverMat.emissiveColor = new Color3(0.02, 0.05, 0.08); // Subtle glow
+  riverMat.subSurface.isRefractionEnabled = true;
+  riverMat.subSurface.refractionIntensity = 0.4;
+  riverMat.subSurface.tintColor = new Color3(0.3, 0.5, 0.55);
+  riverMat.emissiveColor = new Color3(0.02, 0.04, 0.06);
 
   river.material = riverMat;
 
@@ -797,9 +866,9 @@ export function createReachScene(
   let waterOffset = 0;
   scene.onBeforeRenderObservable.add(() => {
     waterOffset += 0.004;
-    if (riverMat.diffuseTexture) {
-      (riverMat.diffuseTexture as Texture).uOffset = waterOffset;
-      (riverMat.diffuseTexture as Texture).vOffset = Math.sin(waterOffset * 2) * 0.01;
+    if (riverMat.albedoTexture) {
+      (riverMat.albedoTexture as Texture).uOffset = waterOffset;
+      (riverMat.albedoTexture as Texture).vOffset = Math.sin(waterOffset * 2) * 0.01;
     }
   });
 
