@@ -18,15 +18,15 @@ export function Sidebar() {
   return (
     <div className="absolute left-4 top-4 bottom-4 w-72 bg-white/90 backdrop-blur-xl rounded-2xl border border-[#e8e4df] flex flex-col shadow-lg shadow-black/5 overflow-hidden">
       {/* Header */}
-      <div className="p-5 border-b border-[#e8e4df]/60">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#d4a574] to-[#c9976a] flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-            </svg>
-          </div>
+      <div className="p-6 border-b border-[#e8e4df]/60">
+        <div className="flex items-center gap-4">
+          <img
+            src="/the_reach_logo_v2_transparent_bg.png"
+            alt="The Reach"
+            className="w-12 h-12 rounded-xl object-cover shadow-sm"
+          />
           <div>
-            <h1 className="text-lg font-semibold text-[#1a1a1a] tracking-tight">The Reach</h1>
+            <h1 className="text-xl font-semibold text-[#1a1a1a] tracking-tight" style={{ fontFamily: "'Playfair Display', serif" }}>The Reach</h1>
             <p className="text-xs text-[#8a857f] font-medium">Project Command</p>
           </div>
         </div>

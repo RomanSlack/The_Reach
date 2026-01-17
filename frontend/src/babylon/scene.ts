@@ -1105,12 +1105,26 @@ export function createReachScene(
   bushMat.roughness = 0.88;
   bushMat.ambientColor = new Color3(0.1, 0.15, 0.07);
 
-  // Rock material - slightly reflective minerals
-  const rockMat = new PBRMaterial('rockMat', scene);
-  rockMat.albedoColor = new Color3(0.48, 0.46, 0.44);
-  rockMat.metallic = 0.05;
-  rockMat.roughness = 0.75;
-  rockMat.ambientColor = new Color3(0.15, 0.14, 0.13);
+  // Rock material 1 - gray granite
+  const rockMat1 = new PBRMaterial('rockMat1', scene);
+  rockMat1.albedoColor = new Color3(0.48, 0.46, 0.44);
+  rockMat1.metallic = 0.05;
+  rockMat1.roughness = 0.75;
+  rockMat1.ambientColor = new Color3(0.15, 0.14, 0.13);
+
+  // Rock material 2 - darker slate/basalt
+  const rockMat2 = new PBRMaterial('rockMat2', scene);
+  rockMat2.albedoColor = new Color3(0.35, 0.34, 0.36);
+  rockMat2.metallic = 0.08;
+  rockMat2.roughness = 0.7;
+  rockMat2.ambientColor = new Color3(0.1, 0.1, 0.11);
+
+  // Rock material 3 - brownish sandstone
+  const rockMat3 = new PBRMaterial('rockMat3', scene);
+  rockMat3.albedoColor = new Color3(0.52, 0.45, 0.38);
+  rockMat3.metallic = 0.02;
+  rockMat3.roughness = 0.85;
+  rockMat3.ambientColor = new Color3(0.16, 0.14, 0.11);
 
   // ===========================================
   // DECIDUOUS TREE TEMPLATE (merged mesh with detailed canopy)
@@ -1225,12 +1239,25 @@ export function createReachScene(
   bushTemplate.isVisible = false;
 
   // ===========================================
-  // ROCK TEMPLATE
+  // ROCK TEMPLATES (3 different shapes and colors)
   // ===========================================
-  const rockTemplate = MeshBuilder.CreatePolyhedron('rock', { type: 1, size: 1 }, scene);
-  rockTemplate.bakeCurrentTransformIntoVertices();
-  rockTemplate.material = rockMat;
-  rockTemplate.isVisible = false;
+  // Type 1: Icosahedron-based - rounded boulder (gray granite)
+  const rockTemplate1 = MeshBuilder.CreatePolyhedron('rock1', { type: 1, size: 1 }, scene);
+  rockTemplate1.bakeCurrentTransformIntoVertices();
+  rockTemplate1.material = rockMat1;
+  rockTemplate1.isVisible = false;
+
+  // Type 2: Dodecahedron-based - more angular (dark slate)
+  const rockTemplate2 = MeshBuilder.CreatePolyhedron('rock2', { type: 2, size: 1 }, scene);
+  rockTemplate2.bakeCurrentTransformIntoVertices();
+  rockTemplate2.material = rockMat2;
+  rockTemplate2.isVisible = false;
+
+  // Type 3: Octahedron-based - sharper/jagged (brownish sandstone)
+  const rockTemplate3 = MeshBuilder.CreatePolyhedron('rock3', { type: 0, size: 1 }, scene);
+  rockTemplate3.bakeCurrentTransformIntoVertices();
+  rockTemplate3.material = rockMat3;
+  rockTemplate3.isVisible = false;
 
   // ===========================================
   // COLLECT INSTANCE POSITIONS
@@ -1497,23 +1524,78 @@ export function createReachScene(
   shadowGenerator.addShadowCaster(bushTemplate);
 
   // Rocks (partially embedded in ground) - combine regular + lakeshore rocks
+  // Split among 3 rock types randomly
   const allRockPositions = [...rockPositions, ...lakeshoreRockPositions];
-  const rockMatrices = new Float32Array(allRockPositions.length * 16);
-  allRockPositions.forEach((pos, i) => {
+
+  // Separate positions into 3 groups randomly
+  const rock1Positions: typeof allRockPositions = [];
+  const rock2Positions: typeof allRockPositions = [];
+  const rock3Positions: typeof allRockPositions = [];
+
+  allRockPositions.forEach(pos => {
+    const rand = Math.random();
+    if (rand < 0.4) {
+      rock1Positions.push(pos); // 40% gray granite
+    } else if (rand < 0.7) {
+      rock2Positions.push(pos); // 30% dark slate
+    } else {
+      rock3Positions.push(pos); // 30% brownish sandstone
+    }
+  });
+
+  // Rock type 1 - gray granite (icosahedron)
+  const rock1Matrices = new Float32Array(rock1Positions.length * 16);
+  rock1Positions.forEach((pos, i) => {
     const terrainY = getTerrainHeight(pos.x, pos.z);
-    const rockY = terrainY + pos.scale * 0.35; // Rock center offset (partially buried)
+    const rockY = terrainY + pos.scale * 0.35;
     Matrix.ComposeToRef(
       new Vector3(pos.scale, pos.scale * 0.7, pos.scale),
       Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
       new Vector3(pos.x, rockY, pos.z),
       tempMatrix
     );
-    tempMatrix.copyToArray(rockMatrices, i * 16);
+    tempMatrix.copyToArray(rock1Matrices, i * 16);
   });
-  rockTemplate.isVisible = true;
-  rockTemplate.thinInstanceSetBuffer('matrix', rockMatrices, 16);
-  rockTemplate.receiveShadows = true;
-  shadowGenerator.addShadowCaster(rockTemplate);
+  rockTemplate1.isVisible = true;
+  rockTemplate1.thinInstanceSetBuffer('matrix', rock1Matrices, 16);
+  rockTemplate1.receiveShadows = true;
+  shadowGenerator.addShadowCaster(rockTemplate1);
+
+  // Rock type 2 - dark slate (dodecahedron)
+  const rock2Matrices = new Float32Array(rock2Positions.length * 16);
+  rock2Positions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const rockY = terrainY + pos.scale * 0.35;
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale, pos.scale * 0.65, pos.scale), // Slightly flatter
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, rockY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(rock2Matrices, i * 16);
+  });
+  rockTemplate2.isVisible = true;
+  rockTemplate2.thinInstanceSetBuffer('matrix', rock2Matrices, 16);
+  rockTemplate2.receiveShadows = true;
+  shadowGenerator.addShadowCaster(rockTemplate2);
+
+  // Rock type 3 - brownish sandstone (octahedron)
+  const rock3Matrices = new Float32Array(rock3Positions.length * 16);
+  rock3Positions.forEach((pos, i) => {
+    const terrainY = getTerrainHeight(pos.x, pos.z);
+    const rockY = terrainY + pos.scale * 0.4;
+    Matrix.ComposeToRef(
+      new Vector3(pos.scale * 0.9, pos.scale * 0.75, pos.scale * 0.9), // Slightly different proportions
+      Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
+      new Vector3(pos.x, rockY, pos.z),
+      tempMatrix
+    );
+    tempMatrix.copyToArray(rock3Matrices, i * 16);
+  });
+  rockTemplate3.isVisible = true;
+  rockTemplate3.thinInstanceSetBuffer('matrix', rock3Matrices, 16);
+  rockTemplate3.receiveShadows = true;
+  shadowGenerator.addShadowCaster(rockTemplate3);
 
   // Log performance info
   const totalRocks = rockPositions.length + lakeshoreRockPositions.length;
