@@ -29,7 +29,7 @@ import {
   Effect,
   VolumetricLightScatteringPostProcess,
 } from '@babylonjs/core';
-// GrassProceduralTexture removed - using custom noise-based texture instead
+import { TerrainMaterial } from '@babylonjs/materials';
 import '@babylonjs/loaders/glTF';
 import type { Project } from '../api/client';
 import { generateRiverPath, generateTerrainHeight, distanceToRiver } from './terrain';
@@ -385,46 +385,35 @@ export function createReachScene(
     ground.createNormals(true);
   }
 
-  // Grass material with custom non-repeating shader
-  const grassMat = new PBRMaterial('grassMat', scene);
-  grassMat.metallic = 0;
-  grassMat.roughness = 0.95;
-
-  // Create a large procedural texture using noise for seamless, non-repetitive grass
-  const grassNoiseTexture = new DynamicTexture('grassNoise', 2048, scene, true);
-  const grassCtx = grassNoiseTexture.getContext() as CanvasRenderingContext2D;
+  // ===========================================
+  // TEXTURE SPLATTING TERRAIN (Supreme Commander Style)
+  // ===========================================
+  // Uses TerrainMaterial with procedural splat map
+  // Red = Mud/Riverbed, Green = Grass, Blue = Rock
 
   // Noise function for texture generation
-  const noise2D = (x: number, y: number, seed: number = 0): number => {
+  const texNoise = (x: number, y: number, seed: number = 0): number => {
     const n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
     return n - Math.floor(n);
   };
 
-  // Fractal noise for natural variation
-  const fbmNoise = (x: number, y: number, octaves: number = 6): number => {
-    let value = 0;
-    let amplitude = 1;
-    let frequency = 1;
-    let maxValue = 0;
+  // FBM noise for natural variation
+  const texFbm = (x: number, y: number, octaves: number = 6): number => {
+    let value = 0, amplitude = 1, frequency = 1, maxValue = 0;
     for (let i = 0; i < octaves; i++) {
-      // Smoother interpolated noise
       const ix = Math.floor(x * frequency);
       const iy = Math.floor(y * frequency);
       const fx = x * frequency - ix;
       const fy = y * frequency - iy;
-      const smoothFx = fx * fx * (3 - 2 * fx);
-      const smoothFy = fy * fy * (3 - 2 * fy);
-
-      const n00 = noise2D(ix, iy, i);
-      const n10 = noise2D(ix + 1, iy, i);
-      const n01 = noise2D(ix, iy + 1, i);
-      const n11 = noise2D(ix + 1, iy + 1, i);
-
-      const nx0 = n00 + smoothFx * (n10 - n00);
-      const nx1 = n01 + smoothFx * (n11 - n01);
-      const n = nx0 + smoothFy * (nx1 - nx0);
-
-      value += n * amplitude;
+      const sx = fx * fx * (3 - 2 * fx);
+      const sy = fy * fy * (3 - 2 * fy);
+      const n00 = texNoise(ix, iy, i);
+      const n10 = texNoise(ix + 1, iy, i);
+      const n01 = texNoise(ix, iy + 1, i);
+      const n11 = texNoise(ix + 1, iy + 1, i);
+      const nx0 = n00 + sx * (n10 - n00);
+      const nx1 = n01 + sx * (n11 - n01);
+      value += (nx0 + sy * (nx1 - nx0)) * amplitude;
       maxValue += amplitude;
       amplitude *= 0.5;
       frequency *= 2;
@@ -432,71 +421,187 @@ export function createReachScene(
     return value / maxValue;
   };
 
-  // Generate the grass texture with varied colors
-  const imageData = grassCtx.createImageData(2048, 2048);
-  const data = imageData.data;
+  // --- Generate Splat/Mix Map (based on height, slope, river proximity) ---
+  const splatSize = 512;
+  const splatTex = new DynamicTexture('splatMap', splatSize, scene, false);
+  const splatCtx = splatTex.getContext() as CanvasRenderingContext2D;
+  const splatData = splatCtx.createImageData(splatSize, splatSize);
+  const splatPixels = splatData.data;
 
-  // Base grass colors
-  const grassColors = [
-    { r: 95, g: 130, b: 70 },   // Dark grass
-    { r: 110, g: 150, b: 85 },  // Medium grass
-    { r: 125, g: 165, b: 95 },  // Light grass
-    { r: 100, g: 140, b: 75 },  // Variation
-  ];
+  for (let py = 0; py < splatSize; py++) {
+    for (let px = 0; px < splatSize; px++) {
+      const pi = (py * splatSize + px) * 4;
 
-  for (let y = 0; y < 2048; y++) {
-    for (let x = 0; x < 2048; x++) {
-      const idx = (y * 2048 + x) * 4;
+      // Map pixel to world coordinates
+      const worldX = (px / splatSize - 0.5) * groundSize;
+      const worldZ = (py / splatSize - 0.5) * groundSize;
 
-      // Large scale variation (patches of different grass)
-      const largeNoise = fbmNoise(x / 300, y / 300, 4);
-      // Medium scale variation
-      const medNoise = fbmNoise(x / 50, y / 50, 4);
-      // Fine detail - higher frequency for sharper look
-      const fineNoise = fbmNoise(x / 8, y / 8, 3);
-      // Extra fine detail for texture
-      const microNoise = fbmNoise(x / 3, y / 3, 2);
+      // Get terrain height and river distance
+      const height = getTerrainHeight(worldX, worldZ);
+      const riverDist = distanceToRiver(worldX, worldZ, riverPath);
 
-      // Combine noise layers - more weight on fine details
-      const combined = largeNoise * 0.35 + medNoise * 0.35 + fineNoise * 0.2 + microNoise * 0.1;
+      // Calculate slope by sampling nearby heights
+      const sampleDist = groundSize / splatSize * 2;
+      const hL = getTerrainHeight(worldX - sampleDist, worldZ);
+      const hR = getTerrainHeight(worldX + sampleDist, worldZ);
+      const hU = getTerrainHeight(worldX, worldZ - sampleDist);
+      const hD = getTerrainHeight(worldX, worldZ + sampleDist);
+      const slopeX = (hR - hL) / (sampleDist * 2);
+      const slopeZ = (hD - hU) / (sampleDist * 2);
+      const slope = Math.sqrt(slopeX * slopeX + slopeZ * slopeZ);
 
-      // Select color based on noise
-      const colorIdx = Math.floor(combined * grassColors.length) % grassColors.length;
-      const nextColorIdx = (colorIdx + 1) % grassColors.length;
-      const blend = (combined * grassColors.length) % 1;
+      // Add noise for natural variation
+      const noise = texFbm(worldX * 0.02, worldZ * 0.02, 4) * 0.3;
 
-      const c1 = grassColors[colorIdx];
-      const c2 = grassColors[nextColorIdx];
+      // Determine weights for each texture
+      let mudWeight = 0;    // Red channel
+      let grassWeight = 0;  // Green channel
+      let rockWeight = 0;   // Blue channel
 
-      // Smooth blend between colors
-      let r = c1.r + blend * (c2.r - c1.r);
-      let g = c1.g + blend * (c2.g - c1.g);
-      let b = c1.b + blend * (c2.b - c1.b);
+      // Mud/Riverbed: near river or very low areas
+      const riverFalloff = Math.max(0, 1 - riverDist / (riverConfig.width * 2.5));
+      mudWeight = riverFalloff * riverFalloff;
+      // Also add mud in low areas
+      if (height < -2) {
+        mudWeight = Math.max(mudWeight, 0.8 + noise * 0.2);
+      } else if (height < 1) {
+        const lowBlend = 1 - (height + 2) / 3;
+        mudWeight = Math.max(mudWeight, lowBlend * 0.5);
+      }
 
-      // Add fine detail variation - stronger effect
-      const detail = (fineNoise - 0.5) * 35 + (microNoise - 0.5) * 15;
-      r = Math.max(0, Math.min(255, r + detail));
-      g = Math.max(0, Math.min(255, g + detail));
-      b = Math.max(0, Math.min(255, b + detail));
+      // Rock: steep slopes
+      const slopeThreshold = 0.4;
+      if (slope > slopeThreshold) {
+        const rockBlend = Math.min(1, (slope - slopeThreshold) / 0.3);
+        rockWeight = rockBlend * rockBlend + noise * 0.2;
+      }
+      // Also rock at high elevations
+      if (height > 12) {
+        const highBlend = Math.min(1, (height - 12) / 5);
+        rockWeight = Math.max(rockWeight, highBlend * 0.7 + noise * 0.3);
+      }
 
-      data[idx] = r;
-      data[idx + 1] = g;
-      data[idx + 2] = b;
-      data[idx + 3] = 255;
+      // Grass: everything else (base layer)
+      grassWeight = 1 - Math.max(mudWeight, rockWeight);
+      grassWeight = Math.max(0, grassWeight + noise * 0.15);
+
+      // Normalize weights
+      const totalWeight = mudWeight + grassWeight + rockWeight;
+      if (totalWeight > 0) {
+        mudWeight /= totalWeight;
+        grassWeight /= totalWeight;
+        rockWeight /= totalWeight;
+      } else {
+        grassWeight = 1;
+      }
+
+      // Write to splat map (RGB = mud, grass, rock)
+      splatPixels[pi] = Math.floor(mudWeight * 255);
+      splatPixels[pi + 1] = Math.floor(grassWeight * 255);
+      splatPixels[pi + 2] = Math.floor(rockWeight * 255);
+      splatPixels[pi + 3] = 255;
     }
   }
-  grassCtx.putImageData(imageData, 0, 0);
-  grassNoiseTexture.update();
+  splatCtx.putImageData(splatData, 0, 0);
+  splatTex.update();
 
-  // Higher UV scale for sharper, more detailed appearance
-  (grassNoiseTexture as Texture).uScale = 25;
-  (grassNoiseTexture as Texture).vScale = 25;
-  (grassNoiseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
-  (grassNoiseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
-  grassMat.albedoTexture = grassNoiseTexture;
-  grassMat.albedoColor = new Color3(1.0, 1.0, 1.0); // Let texture define color
+  // --- Generate Tileable Detail Textures ---
+  const detailSize = 512;
 
-  ground.material = grassMat;
+  // Mud/Riverbed texture (dark, wet)
+  const mudTex = new DynamicTexture('mudTex', detailSize, scene, true);
+  const mudCtx = mudTex.getContext() as CanvasRenderingContext2D;
+  const mudData = mudCtx.createImageData(detailSize, detailSize);
+  const mudPixels = mudData.data;
+  for (let ty = 0; ty < detailSize; ty++) {
+    for (let tx = 0; tx < detailSize; tx++) {
+      const ti = (ty * detailSize + tx) * 4;
+      const n1 = texFbm(tx / 40, ty / 40, 5);
+      const n2 = texFbm(tx / 10, ty / 10, 3);
+      const combined = n1 * 0.7 + n2 * 0.3;
+      // Dark brown/gray mud colors
+      const base = 45 + combined * 35;
+      mudPixels[ti] = base + 10;     // R - slightly warmer
+      mudPixels[ti + 1] = base - 5;  // G
+      mudPixels[ti + 2] = base - 15; // B - less blue
+      mudPixels[ti + 3] = 255;
+    }
+  }
+  mudCtx.putImageData(mudData, 0, 0);
+  mudTex.update();
+  mudTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  mudTex.wrapV = Texture.WRAP_ADDRESSMODE;
+
+  // Grass texture (varied greens)
+  const grassTex = new DynamicTexture('grassTex', detailSize, scene, true);
+  const grassCtx = grassTex.getContext() as CanvasRenderingContext2D;
+  const grassData = grassCtx.createImageData(detailSize, detailSize);
+  const grassPixels = grassData.data;
+  for (let ty = 0; ty < detailSize; ty++) {
+    for (let tx = 0; tx < detailSize; tx++) {
+      const ti = (ty * detailSize + tx) * 4;
+      const n1 = texFbm(tx / 50, ty / 50, 4);
+      const n2 = texFbm(tx / 12, ty / 12, 3);
+      const n3 = texFbm(tx / 4, ty / 4, 2);
+      const combined = n1 * 0.4 + n2 * 0.4 + n3 * 0.2;
+      // Green grass with variation
+      grassPixels[ti] = 75 + combined * 50;      // R
+      grassPixels[ti + 1] = 120 + combined * 45; // G - dominant
+      grassPixels[ti + 2] = 55 + combined * 40;  // B
+      grassPixels[ti + 3] = 255;
+    }
+  }
+  grassCtx.putImageData(grassData, 0, 0);
+  grassTex.update();
+  grassTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  grassTex.wrapV = Texture.WRAP_ADDRESSMODE;
+
+  // Rock texture (gray with cracks)
+  const rockTex = new DynamicTexture('rockTex', detailSize, scene, true);
+  const rockCtx = rockTex.getContext() as CanvasRenderingContext2D;
+  const rockData = rockCtx.createImageData(detailSize, detailSize);
+  const rockPixels = rockData.data;
+  for (let ty = 0; ty < detailSize; ty++) {
+    for (let tx = 0; tx < detailSize; tx++) {
+      const ti = (ty * detailSize + tx) * 4;
+      const n1 = texFbm(tx / 60, ty / 60, 5);
+      const n2 = texFbm(tx / 15, ty / 15, 4);
+      const n3 = texFbm(tx / 5, ty / 5, 2);
+      const combined = n1 * 0.5 + n2 * 0.35 + n3 * 0.15;
+      // Gray rock
+      const base = 90 + combined * 60;
+      rockPixels[ti] = base;         // R
+      rockPixels[ti + 1] = base - 3; // G - slightly cooler
+      rockPixels[ti + 2] = base - 5; // B
+      rockPixels[ti + 3] = 255;
+    }
+  }
+  rockCtx.putImageData(rockData, 0, 0);
+  rockTex.update();
+  rockTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  rockTex.wrapV = Texture.WRAP_ADDRESSMODE;
+
+  // --- Create Terrain Material with Splatting ---
+  const terrainMat = new TerrainMaterial('terrainMat', scene);
+  terrainMat.mixTexture = splatTex;
+
+  // Texture 1 (Red channel) - Mud/Riverbed
+  terrainMat.diffuseTexture1 = mudTex;
+  terrainMat.diffuseTexture1.uScale = 60;
+  terrainMat.diffuseTexture1.vScale = 60;
+
+  // Texture 2 (Green channel) - Grass
+  terrainMat.diffuseTexture2 = grassTex;
+  terrainMat.diffuseTexture2.uScale = 80;
+  terrainMat.diffuseTexture2.vScale = 80;
+
+  // Texture 3 (Blue channel) - Rock
+  terrainMat.diffuseTexture3 = rockTex;
+  terrainMat.diffuseTexture3.uScale = 50;
+  terrainMat.diffuseTexture3.vScale = 50;
+
+  // Apply material
+  ground.material = terrainMat;
   ground.receiveShadows = true;
 
   // ===========================================
