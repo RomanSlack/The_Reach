@@ -32,7 +32,7 @@ import {
 import { TerrainMaterial } from '@babylonjs/materials';
 import '@babylonjs/loaders/glTF';
 import type { Project } from '../api/client';
-import { generateRiverPath, generateTerrainHeight, distanceToRiver } from './terrain';
+import { generateTerrainHeight, distanceToLake, getLakeRadiusAtAngle, getWaterLevel, type LakeConfig } from './terrain';
 
 export interface ReachScene {
   scene: Scene;
@@ -347,22 +347,18 @@ export function createReachScene(
   const highlightLayer = new HighlightLayer('highlight', scene);
 
   // ===========================================
-  // RIVER PATH (generated first for terrain carving)
+  // CENTRAL LAKE (terrain slopes toward it)
   // ===========================================
-  const riverConfig = {
-    startX: -200,
-    startZ: 0,
-    endX: 200,
-    endZ: 0,
-    width: 12,
-    depth: 3,
-    meander: 40,
-    frequency: 1.5,
+  const lakeConfig: LakeConfig = {
+    centerX: 0,
+    centerZ: 0,
+    radius: 35,        // Lake radius
+    depth: 4,          // Maximum depth
+    shoreWidth: 10,    // Beach/shore transition width (thinner)
   };
-  const riverPath = generateRiverPath(riverConfig, 150);
 
   // ===========================================
-  // GRASSY TERRAIN WITH RIVER CARVING
+  // TERRAIN WITH LAKE BASIN
   // ===========================================
   const groundSize = 400;
   const subdivisions = 300; // High resolution for detailed terrain
@@ -375,10 +371,15 @@ export function createReachScene(
 
   // Helper to get terrain height at any point
   function getTerrainHeight(x: number, z: number): number {
-    return generateTerrainHeight(x, z, riverPath, riverConfig.width, riverConfig.depth);
+    return generateTerrainHeight(x, z, lakeConfig);
   }
 
-  // Apply terrain height with river carving
+  // Helper to get distance to lake shore
+  function getDistanceToLake(x: number, z: number): number {
+    return distanceToLake(x, z, lakeConfig);
+  }
+
+  // Apply terrain height with lake basin
   const positions = ground.getVerticesData('position');
   if (positions) {
     for (let i = 0; i < positions.length; i += 3) {
@@ -393,8 +394,8 @@ export function createReachScene(
   // ===========================================
   // BIOME-BASED TERRAIN SYSTEM (Minecraft-style)
   // ===========================================
-  // Procedural biomes: Grassland, Forest, Riverbank
-  // Red = Riverbank (sand + pebbles), Green = Grass, Blue = Forest floor
+  // Procedural biomes: Grassland, Forest, Lakeshore
+  // Red = Lakeshore (sand + pebbles), Green = Grass, Blue = Forest floor
 
   // Noise functions for terrain/biome generation
   const texNoise = (x: number, y: number, seed: number = 0): number => {
@@ -458,9 +459,9 @@ export function createReachScene(
     for (let bx = 0; bx < biomeMapSize; bx++) {
       const worldX = (bx / biomeMapSize - 0.5) * groundSize;
       const worldZ = (bz / biomeMapSize - 0.5) * groundSize;
-      const riverDist = distanceToRiver(worldX, worldZ, riverPath);
-      // No forest too close to river
-      let forestDensity = riverDist > riverConfig.width * 2 ? getForestDensity(worldX, worldZ) : 0;
+      const lakeDist = getDistanceToLake(worldX, worldZ);
+      // No forest too close to lake
+      let forestDensity = lakeDist > lakeConfig.radius + lakeConfig.shoreWidth ? getForestDensity(worldX, worldZ) : 0;
       biomeData[bz][bx] = {
         forestDensity,
         pineRatio: getPineRatio(worldX, worldZ)
@@ -492,7 +493,7 @@ export function createReachScene(
       const worldZ = (0.5 - py / splatSize) * groundSize;
 
       const height = getTerrainHeight(worldX, worldZ);
-      const riverDist = distanceToRiver(worldX, worldZ, riverPath);
+      const lakeDist = getDistanceToLake(worldX, worldZ);
       const biome = sampleBiome(worldX, worldZ);
 
       // Calculate slope
@@ -507,35 +508,38 @@ export function createReachScene(
       const edgeNoise = texFbm(worldX * 0.08, worldZ * 0.08, 4) * 0.3;
       const fineNoise = texFbm(worldX * 0.2, worldZ * 0.2, 2) * 0.15;
 
-      let riverbankWeight = 0;  // Red: sand/pebbles
+      let shoreWeight = 0;       // Red: shore/beach texture
       let grassWeight = 0;       // Green: open grass
       let forestWeight = 0;      // Blue: forest floor
 
-      // RIVERBANK: Cover entire river bottom and sides, fade into grass
-      const bankEnd = riverConfig.width * 1.5;   // Where bank fades to grass
+      // LAKESHORE: Cover lake bottom and shore, fade into grass
+      const shoreEnd = lakeConfig.radius + lakeConfig.shoreWidth;
 
-      if (riverDist < bankEnd) {
-        if (riverDist < riverConfig.width * 0.8) {
-          // Inside river channel - full riverbank/mud texture
-          riverbankWeight = 1.0;
+      if (lakeDist < shoreEnd) {
+        if (lakeDist < lakeConfig.radius * 0.9) {
+          // Inside lake - full shore/sand texture (visible through water)
+          shoreWeight = 1.0;
+        } else if (lakeDist < lakeConfig.radius + lakeConfig.shoreWidth * 0.5) {
+          // Beach area - strong shore texture
+          shoreWeight = 0.9;
         } else {
-          // Transition zone from river edge to grass
-          const fadeProgress = (riverDist - riverConfig.width * 0.8) / (bankEnd - riverConfig.width * 0.8);
+          // Transition zone from shore to grass
+          const fadeProgress = (lakeDist - lakeConfig.radius - lakeConfig.shoreWidth * 0.5) / (lakeConfig.shoreWidth * 0.5);
           // Smoothstep for gradual transition
           const smoothFade = fadeProgress * fadeProgress * (3 - 2 * fadeProgress);
-          riverbankWeight = 1 - smoothFade;
+          shoreWeight = 0.9 * (1 - smoothFade);
         }
-        // Add noise for organic edges at the grass boundary
-        if (riverDist > riverConfig.width * 0.5) {
-          riverbankWeight *= (1 + edgeNoise * 0.5);
+        // Add noise for organic edges
+        if (lakeDist > lakeConfig.radius * 0.5) {
+          shoreWeight *= (1 + edgeNoise * 0.4);
         }
-        riverbankWeight = Math.max(0, Math.min(1, riverbankWeight));
+        shoreWeight = Math.max(0, Math.min(1, shoreWeight));
       }
 
-      // Steeper slopes near water also get bank texture
-      if (riverDist < riverConfig.width * 2 && slope > 0.3) {
-        const slopeBank = slope * 0.7 * (1 - riverDist / (riverConfig.width * 2));
-        riverbankWeight = Math.max(riverbankWeight, slopeBank);
+      // Steeper slopes near water also get shore texture
+      if (lakeDist < shoreEnd * 1.3 && slope > 0.25) {
+        const slopeShore = slope * 0.6 * (1 - lakeDist / (shoreEnd * 1.3));
+        shoreWeight = Math.max(shoreWeight, slopeShore);
       }
 
       // FOREST FLOOR: Under trees with smooth edges
@@ -546,26 +550,26 @@ export function createReachScene(
       if (slope > 0.4) forestWeight *= (1 - (slope - 0.4) * 2);
       forestWeight = Math.max(0, Math.min(1, forestWeight));
 
-      // Don't put forest floor too close to river
-      if (riverDist < riverConfig.width * 1.5) {
-        forestWeight *= Math.max(0, (riverDist - riverConfig.width) / (riverConfig.width * 0.5));
+      // Don't put forest floor too close to lake
+      if (lakeDist < lakeConfig.radius + lakeConfig.shoreWidth) {
+        forestWeight *= Math.max(0, (lakeDist - lakeConfig.radius) / lakeConfig.shoreWidth);
       }
 
       // GRASS: Everything else - smooth blend
-      grassWeight = 1 - Math.max(riverbankWeight * 0.9, forestWeight * 0.85);
+      grassWeight = 1 - Math.max(shoreWeight * 0.9, forestWeight * 0.85);
       grassWeight = Math.max(0.05, grassWeight); // Always some grass showing through
 
       // Soft normalize - allow some overlap for smoother blending
-      const total = riverbankWeight + grassWeight + forestWeight;
+      const total = shoreWeight + grassWeight + forestWeight;
       if (total > 0) {
-        riverbankWeight /= total;
+        shoreWeight /= total;
         grassWeight /= total;
         forestWeight /= total;
       } else {
         grassWeight = 1;
       }
 
-      splatPixels[pi] = Math.floor(riverbankWeight * 255);
+      splatPixels[pi] = Math.floor(shoreWeight * 255);
       splatPixels[pi + 1] = Math.floor(grassWeight * 255);
       splatPixels[pi + 2] = Math.floor(forestWeight * 255);
       splatPixels[pi + 3] = 255;
@@ -607,11 +611,11 @@ export function createReachScene(
   // --- Generate Detail Textures ---
   const detailSize = 512;
 
-  // RIVERBANK TEXTURE: Muddy dirt with pebbles
-  const riverbankTex = new DynamicTexture('riverbankTex', detailSize, scene, true);
-  const riverbankCtx = riverbankTex.getContext() as CanvasRenderingContext2D;
-  const riverbankData = riverbankCtx.createImageData(detailSize, detailSize);
-  const riverbankPixels = riverbankData.data;
+  // LAKESHORE TEXTURE: Sandy beach with pebbles
+  const lakeshoreTex = new DynamicTexture('lakeshoreTex', detailSize, scene, true);
+  const lakeshoreCtx = lakeshoreTex.getContext() as CanvasRenderingContext2D;
+  const lakeshoreData = lakeshoreCtx.createImageData(detailSize, detailSize);
+  const lakeshorePixels = lakeshoreData.data;
   for (let ty = 0; ty < detailSize; ty++) {
     for (let tx = 0; tx < detailSize; tx++) {
       const ti = (ty * detailSize + tx) * 4;
@@ -625,23 +629,23 @@ export function createReachScene(
       if (isPebble) {
         // Gray-brown pebbles
         const pebbleShade = 85 + n2 * 40;
-        riverbankPixels[ti] = pebbleShade + 5;
-        riverbankPixels[ti + 1] = pebbleShade;
-        riverbankPixels[ti + 2] = pebbleShade - 10;
+        lakeshorePixels[ti] = pebbleShade + 5;
+        lakeshorePixels[ti + 1] = pebbleShade;
+        lakeshorePixels[ti + 2] = pebbleShade - 10;
       } else {
         // Darker muddy/dirt bank - not bright sand
         const base = 90 + n1 * 35 + n2 * 20;
-        riverbankPixels[ti] = base + 10;      // R - slight warmth
-        riverbankPixels[ti + 1] = base - 5;   // G
-        riverbankPixels[ti + 2] = base - 20;  // B - less blue
+        lakeshorePixels[ti] = base + 10;      // R - slight warmth
+        lakeshorePixels[ti + 1] = base - 5;   // G
+        lakeshorePixels[ti + 2] = base - 20;  // B - less blue
       }
-      riverbankPixels[ti + 3] = 255;
+      lakeshorePixels[ti + 3] = 255;
     }
   }
-  riverbankCtx.putImageData(riverbankData, 0, 0);
-  riverbankTex.update();
-  riverbankTex.wrapU = Texture.WRAP_ADDRESSMODE;
-  riverbankTex.wrapV = Texture.WRAP_ADDRESSMODE;
+  lakeshoreCtx.putImageData(lakeshoreData, 0, 0);
+  lakeshoreTex.update();
+  lakeshoreTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  lakeshoreTex.wrapV = Texture.WRAP_ADDRESSMODE;
 
   // GRASS TEXTURE: Dark, rich grass
   const grassTex = new DynamicTexture('grassTex', detailSize, scene, true);
@@ -711,7 +715,7 @@ export function createReachScene(
   terrainMat.specularPower = 8;
 
   // Texture 1 (Red) - Riverbank with pebbles
-  terrainMat.diffuseTexture1 = riverbankTex;
+  terrainMat.diffuseTexture1 = lakeshoreTex;
   terrainMat.diffuseTexture1.uScale = 70;
   terrainMat.diffuseTexture1.vScale = 70;
 
@@ -1242,11 +1246,12 @@ export function createReachScene(
   const pinePositions: InstanceData[] = [];
   const bushPositions: InstanceData[] = [];
   const rockPositions: InstanceData[] = [];
-  const riverbankRockPositions: InstanceData[] = [];
+  const lakeshoreRockPositions: InstanceData[] = [];
 
-  // Helper to check river distance
-  const isValidPosition = (x: number, z: number, minDist: number) => {
-    return distanceToRiver(x, z, riverPath) >= riverConfig.width * minDist;
+  // Helper to check lake distance - avoid placing things in water
+  const isValidPosition = (x: number, z: number, minDistMultiplier: number) => {
+    const lakeDist = getDistanceToLake(x, z);
+    return lakeDist >= lakeConfig.radius + lakeConfig.shoreWidth * minDistMultiplier * 0.3;
   };
 
   // --- BIOME-BASED VEGETATION PLACEMENT ---
@@ -1257,8 +1262,8 @@ export function createReachScene(
     const x = (Math.random() - 0.5) * groundSize * 0.95;
     const z = (Math.random() - 0.5) * groundSize * 0.95;
 
-    const riverDist = distanceToRiver(x, z, riverPath);
-    if (riverDist < riverConfig.width * 2) continue;
+    const lakeDist = getDistanceToLake(x, z);
+    if (lakeDist < lakeConfig.radius + lakeConfig.shoreWidth) continue;
 
     const biome = sampleBiome(x, z);
 
@@ -1282,7 +1287,7 @@ export function createReachScene(
     const z = (Math.random() - 0.5) * groundSize * 0.9;
     const biome = sampleBiome(x, z);
 
-    if (biome.forestDensity < 0.1 && isValidPosition(x, z, 2.5)) {
+    if (biome.forestDensity < 0.1 && isValidPosition(x, z, 2)) {
       const scale = 0.7 + Math.random() * 0.5;
       const rotY = Math.random() * Math.PI * 2;
       treePositions.push({ x, z, scale, rotY });
@@ -1296,7 +1301,7 @@ export function createReachScene(
     const biome = sampleBiome(x, z);
 
     // Forest edges: where density transitions
-    if (biome.forestDensity > 0.1 && biome.forestDensity < 0.5 && isValidPosition(x, z, 1.8)) {
+    if (biome.forestDensity > 0.1 && biome.forestDensity < 0.5 && isValidPosition(x, z, 1.5)) {
       bushPositions.push({
         x, z,
         scale: 0.4 + Math.random() * 0.7,
@@ -1311,7 +1316,7 @@ export function createReachScene(
     const z = (Math.random() - 0.5) * groundSize * 0.9;
     const biome = sampleBiome(x, z);
 
-    if (biome.forestDensity < 0.2 && isValidPosition(x, z, 1.5)) {
+    if (biome.forestDensity < 0.2 && isValidPosition(x, z, 1)) {
       bushPositions.push({
         x, z,
         scale: 0.5 + Math.random() * 0.8,
@@ -1320,36 +1325,33 @@ export function createReachScene(
     }
   }
 
-  // --- RIVERBANK ROCKS ---
-  // Place rocks along the riverbank
-  for (let i = 0; i < 150; i++) {
-    // Sample along river path
-    const pathIdx = Math.floor(Math.random() * riverPath.length);
-    const riverPoint = riverPath[pathIdx];
+  // --- LAKESHORE ROCKS ---
+  // Place rocks around the lakeshore
+  for (let i = 0; i < 180; i++) {
+    // Random angle around the lake
+    const angle = Math.random() * Math.PI * 2;
+    // Distance from lake center - on the shore
+    const baseDist = lakeConfig.radius + Math.random() * lakeConfig.shoreWidth * 0.8;
+    const x = lakeConfig.centerX + Math.cos(angle) * baseDist;
+    const z = lakeConfig.centerZ + Math.sin(angle) * baseDist;
 
-    // Random offset perpendicular to river
-    const perpAngle = Math.random() * Math.PI * 2;
-    const dist = riverConfig.width * 0.9 + Math.random() * riverConfig.width * 1.5;
-    const x = riverPoint.x + Math.cos(perpAngle) * dist;
-    const z = riverPoint.z + Math.sin(perpAngle) * dist;
-
-    const actualDist = distanceToRiver(x, z, riverPath);
-    if (actualDist > riverConfig.width * 0.8 && actualDist < riverConfig.width * 2.5) {
-      riverbankRockPositions.push({
+    const actualDist = getDistanceToLake(x, z);
+    if (actualDist > lakeConfig.radius * 0.85 && actualDist < lakeConfig.radius + lakeConfig.shoreWidth) {
+      lakeshoreRockPositions.push({
         x, z,
-        scale: 0.3 + Math.random() * 0.7,
+        scale: 0.25 + Math.random() * 0.6,
         rotY: Math.random() * Math.PI * 2
       });
     }
   }
 
   // Regular rocks scattered elsewhere
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 80; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 30 + Math.random() * 165;
+    const radius = lakeConfig.radius + lakeConfig.shoreWidth + 20 + Math.random() * 140;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-    if (isValidPosition(x, z, 2)) {
+    if (isValidPosition(x, z, 1)) {
       rockPositions.push({ x, z, scale: 0.4 + Math.random() * 1.2, rotY: Math.random() * Math.PI * 2 });
     }
   }
@@ -1452,8 +1454,8 @@ export function createReachScene(
   bushTemplate.receiveShadows = true;
   shadowGenerator.addShadowCaster(bushTemplate);
 
-  // Rocks (partially embedded in ground) - combine regular + riverbank rocks
-  const allRockPositions = [...rockPositions, ...riverbankRockPositions];
+  // Rocks (partially embedded in ground) - combine regular + lakeshore rocks
+  const allRockPositions = [...rockPositions, ...lakeshoreRockPositions];
   const rockMatrices = new Float32Array(allRockPositions.length * 16);
   allRockPositions.forEach((pos, i) => {
     const terrainY = getTerrainHeight(pos.x, pos.z);
@@ -1472,66 +1474,46 @@ export function createReachScene(
   shadowGenerator.addShadowCaster(rockTemplate);
 
   // Log performance info
-  const totalRocks = rockPositions.length + riverbankRockPositions.length;
-  console.log(`[Performance] Vegetation instances: ${treePositions.length} trees, ${pinePositions.length} pines, ${bushPositions.length} bushes, ${totalRocks} rocks (${riverbankRockPositions.length} riverbank)`);
+  const totalRocks = rockPositions.length + lakeshoreRockPositions.length;
+  console.log(`[Performance] Vegetation instances: ${treePositions.length} trees, ${pinePositions.length} pines, ${bushPositions.length} bushes, ${totalRocks} rocks (${lakeshoreRockPositions.length} lakeshore)`);
   console.log(`[Performance] Draw calls reduced from ~${(treePositions.length * 7) + (pinePositions.length * 4) + (bushPositions.length * 4) + totalRocks} to ~6`);
 
   // ===========================================
-  // RIVER
+  // LAKE WATER
   // ===========================================
-  // River water surface - flat across width (water finds its level)
-  // but follows the riverbed depth along its length
+  // Simple disc at the water level from terrain.ts
 
-  const riverWidthFactor = 0.8; // How much of the carved width to fill with water
-  const waterFillLevel = 0.7; // How full the river is (0-1, where 1 = full to banks)
+  const waterLevel = getWaterLevel(lakeConfig);
 
-  // Calculate water level at each point along the river center
-  // Water is FLAT across width at each point, but follows river depth along length
-  const riverWaterLevels = riverPath.map(p => {
-    // Get the deepest point (river center)
-    const centerDepth = getTerrainHeight(p.x, p.z);
-    // Get the bank height (edge of river)
-    const bankHeight = getTerrainHeight(p.x, p.z + riverConfig.width);
-    // Water level is between riverbed and bank, based on fill level
-    return centerDepth + (bankHeight - centerDepth) * waterFillLevel;
-  });
-
-  // Create two edge paths with FLAT water surface across width
-  const leftBank = riverPath.map((p, i) =>
-    new Vector3(p.x, riverWaterLevels[i], p.z - riverConfig.width * riverWidthFactor)
-  );
-  const rightBank = riverPath.map((p, i) =>
-    new Vector3(p.x, riverWaterLevels[i], p.z + riverConfig.width * riverWidthFactor)
-  );
-
-  const river = MeshBuilder.CreateRibbon('river', {
-    pathArray: [leftBank, rightBank],
+  // Create a simple disc for the lake water
+  const lake = MeshBuilder.CreateDisc('lake', {
+    radius: lakeConfig.radius * 1.05, // Slightly larger than lake to cover edges
+    tessellation: 64,
     sideOrientation: Mesh.DOUBLESIDE,
   }, scene);
 
-  // Offset slightly down to prevent z-fighting with terrain
-  river.position.y = -0.05;
+  // Rotate to be horizontal and position at water level
+  lake.rotation.x = Math.PI / 2;
+  lake.position = new Vector3(lakeConfig.centerX, waterLevel, lakeConfig.centerZ);
 
-  // Simple flowing water with visible animation
-  const riverMat = new StandardMaterial('riverMat', scene);
+  // EXACT same material as river
+  const lakeMat = new StandardMaterial('lakeMat', scene);
+  lakeMat.diffuseColor = new Color3(0.3, 0.5, 0.6);
+  lakeMat.specularColor = new Color3(0.6, 0.7, 0.8);
+  lakeMat.specularPower = 64;
+  lakeMat.alpha = 0.65;
+  lakeMat.backFaceCulling = false;
 
-  // Water color - semi-transparent blue
-  riverMat.diffuseColor = new Color3(0.3, 0.5, 0.6);
-  riverMat.specularColor = new Color3(0.6, 0.7, 0.8);
-  riverMat.specularPower = 64;
-  riverMat.alpha = 0.65;
-  riverMat.backFaceCulling = false;
-
-  // Create simple flow texture with visible streaks
+  // EXACT same texture as river
   const waterTexSize = 256;
-  const waterTexture = new DynamicTexture('waterTex', waterTexSize, scene, false);
+  const waterTexture = new DynamicTexture('lakeWaterTex', waterTexSize, scene, false);
   const waterCtx = waterTexture.getContext() as CanvasRenderingContext2D;
 
   // Light blue-green base
   waterCtx.fillStyle = '#5a9ab0';
   waterCtx.fillRect(0, 0, waterTexSize, waterTexSize);
 
-  // Flow lines - white/light streaks going horizontally
+  // Flow lines - white/light streaks
   for (let i = 0; i < 60; i++) {
     const y = Math.random() * waterTexSize;
     const x = Math.random() * waterTexSize;
@@ -1563,23 +1545,25 @@ export function createReachScene(
 
   waterTexture.update();
 
-  riverMat.diffuseTexture = waterTexture;
-  (riverMat.diffuseTexture as Texture).uScale = 10;
-  (riverMat.diffuseTexture as Texture).vScale = 4;
-  (riverMat.diffuseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
-  (riverMat.diffuseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
+  lakeMat.diffuseTexture = waterTexture;
+  (lakeMat.diffuseTexture as Texture).uScale = 4;
+  (lakeMat.diffuseTexture as Texture).vScale = 4;
+  (lakeMat.diffuseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
+  (lakeMat.diffuseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
 
   // Slight emissive for that water glow
-  riverMat.emissiveColor = new Color3(0.05, 0.1, 0.12);
+  lakeMat.emissiveColor = new Color3(0.05, 0.1, 0.12);
 
-  river.material = riverMat;
+  lake.material = lakeMat;
 
-  // Animate water flow - slow and steady
-  let waterOffset = 0;
+  // Ripple animation - gentle oscillating UV movement
+  let waterTime = 0;
   scene.onBeforeRenderObservable.add(() => {
-    waterOffset += 0.002; // Slow flow speed
-    if (riverMat.diffuseTexture) {
-      (riverMat.diffuseTexture as Texture).uOffset = waterOffset;
+    waterTime += 0.0008;
+    if (lakeMat.diffuseTexture) {
+      // Subtle multi-frequency oscillation for natural ripple effect
+      (lakeMat.diffuseTexture as Texture).uOffset = Math.sin(waterTime) * 0.02 + Math.sin(waterTime * 1.7) * 0.01;
+      (lakeMat.diffuseTexture as Texture).vOffset = Math.cos(waterTime * 0.8) * 0.02 + Math.cos(waterTime * 1.3) * 0.01;
     }
   });
 

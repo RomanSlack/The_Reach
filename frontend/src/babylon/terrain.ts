@@ -81,112 +81,104 @@ export function fbm(
   return total / maxValue;
 }
 
-// River path definition with smooth curves
-export interface RiverConfig {
-  startX: number;
-  startZ: number;
-  endX: number;
-  endZ: number;
-  width: number;
-  depth: number;
-  meander: number;
-  frequency: number;
+// Lake configuration
+export interface LakeConfig {
+  centerX: number;
+  centerZ: number;
+  radius: number;      // Base radius of the lake
+  depth: number;       // Maximum depth
+  shoreWidth: number;  // Width of the shore/beach area
 }
 
-export function generateRiverPath(config: RiverConfig, segments: number = 100): Vector3[] {
-  const path: Vector3[] = [];
-  const { startX, startZ, endX, endZ, meander, frequency } = config;
+// Calculate distance from a point to the lake center, with organic shape
+export function distanceToLake(x: number, z: number, config: LakeConfig): number {
+  const dx = x - config.centerX;
+  const dz = z - config.centerZ;
+  const baseDist = Math.sqrt(dx * dx + dz * dz);
 
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const x = lerp(t, startX, endX);
+  // Add noise to make the lake shape organic (not perfectly circular)
+  const angle = Math.atan2(dz, dx);
+  const shapeNoise = perlin2D(angle * 2, baseDist * 0.01) * config.radius * 0.25;
+  const shapeNoise2 = perlin2D(angle * 5 + 100, baseDist * 0.02) * config.radius * 0.1;
 
-    // Base Z interpolation
-    const baseZ = lerp(t, startZ, endZ);
-
-    // Add meandering using sine waves with noise
-    const meander1 = Math.sin(x * frequency * 0.01) * meander;
-    const meander2 = Math.sin(x * frequency * 0.025 + 1.5) * meander * 0.5;
-    const meander3 = perlin2D(x * 0.02, 0) * meander * 0.3;
-
-    const z = baseZ + meander1 + meander2 + meander3;
-
-    path.push(new Vector3(x, 0, z));
-  }
-
-  return path;
+  // Effective distance accounts for organic shape
+  return baseDist - shapeNoise - shapeNoise2;
 }
 
-// Calculate distance from a point to the river path
-export function distanceToRiver(x: number, z: number, riverPath: Vector3[]): number {
-  let minDist = Infinity;
-
-  for (let i = 0; i < riverPath.length - 1; i++) {
-    const a = riverPath[i];
-    const b = riverPath[i + 1];
-
-    // Project point onto line segment
-    const ax = x - a.x;
-    const az = z - a.z;
-    const bx = b.x - a.x;
-    const bz = b.z - a.z;
-
-    const dot = ax * bx + az * bz;
-    const lenSq = bx * bx + bz * bz;
-    let t = Math.max(0, Math.min(1, dot / lenSq));
-
-    const projX = a.x + t * bx;
-    const projZ = a.z + t * bz;
-
-    const dist = Math.sqrt((x - projX) ** 2 + (z - projZ) ** 2);
-    minDist = Math.min(minDist, dist);
-  }
-
-  return minDist;
+// Get the effective lake radius at a given angle (for water mesh)
+export function getLakeRadiusAtAngle(angle: number, config: LakeConfig): number {
+  const shapeNoise = perlin2D(angle * 2, 0) * config.radius * 0.25;
+  const shapeNoise2 = perlin2D(angle * 5 + 100, 0) * config.radius * 0.1;
+  return config.radius + shapeNoise + shapeNoise2;
 }
 
-// Generate terrain height with river carving
+// Water surface level (exported for use in scene.ts)
+export function getWaterLevel(lakeConfig: LakeConfig): number {
+  return -lakeConfig.depth * 0.2; // Water surface Y position
+}
+
+// Generate terrain height with central lake basin
 export function generateTerrainHeight(
   x: number,
   z: number,
-  riverPath: Vector3[],
-  riverWidth: number,
-  riverDepth: number
+  lakeConfig: LakeConfig
 ): number {
-  // Base terrain using FBM
-  const baseHeight = fbm(x, z, 6, 0.5, 2.0, 0.008) * 15;
+  const distToLake = distanceToLake(x, z, lakeConfig);
+  const waterSurface = getWaterLevel(lakeConfig);
 
-  // Add some larger hills
-  const hills = fbm(x, z, 3, 0.6, 2.0, 0.003) * 8;
+  // Base terrain using FBM (always positive base)
+  const baseHeight = fbm(x, z, 6, 0.5, 2.0, 0.008) * 10 + 3;
 
-  // Add fine detail
-  const detail = fbm(x, z, 4, 0.4, 2.5, 0.03) * 2;
+  // Rolling hills
+  const hills = fbm(x, z, 3, 0.6, 2.0, 0.004) * 6;
+
+  // Fine detail everywhere
+  const detail = fbm(x, z, 4, 0.4, 2.5, 0.03) * 1.5;
 
   let height = baseHeight + hills + detail;
 
-  // Carve river into terrain
-  const distToRiver = distanceToRiver(x, z, riverPath);
+  // Lake bed - below water level
+  if (distToLake < lakeConfig.radius) {
+    // Inside the lake - create bowl-shaped depression
+    const lakeInfluence = 1 - distToLake / lakeConfig.radius;
+    const lakeSmooth = lakeInfluence * lakeInfluence;
 
-  if (distToRiver < riverWidth * 2) {
-    // River bed (deeper in center)
-    if (distToRiver < riverWidth * 0.5) {
-      // Deep center channel
-      const centerFactor = 1 - (distToRiver / (riverWidth * 0.5));
-      height = -riverDepth * (0.5 + 0.5 * centerFactor);
-    } else if (distToRiver < riverWidth) {
-      // Shallow river area
-      const bankFactor = (distToRiver - riverWidth * 0.5) / (riverWidth * 0.5);
-      height = lerp(bankFactor, -riverDepth * 0.5, -riverDepth * 0.2);
-    } else {
-      // Riverbank slope (gradual transition to terrain)
-      const slopeFactor = (distToRiver - riverWidth) / riverWidth;
-      const smoothSlope = smoothstep(0, 1, slopeFactor);
-      const bankHeight = lerp(smoothSlope, -riverDepth * 0.2, height);
-      height = bankHeight;
+    // Deeper toward center, starting from water surface
+    const lakebedDepth = lakeConfig.depth * (0.3 + 0.7 * lakeSmooth);
+    height = waterSurface - lakebedDepth;
+
+    // Add slight lakebed variation
+    const bedNoise = fbm(x * 0.05, z * 0.05, 2, 0.5, 2.0, 1.0) * 0.5;
+    height += bedNoise;
+  } else if (distToLake < lakeConfig.radius + lakeConfig.shoreWidth) {
+    // Shore/beach area - slopes up from water edge to terrain
+    const shoreProgress = (distToLake - lakeConfig.radius) / lakeConfig.shoreWidth;
+    const shoreSmooth = shoreProgress * shoreProgress * (3 - 2 * shoreProgress);
+
+    // Shore starts at water level and rises to meet terrain
+    const shoreTerrainHeight = Math.max(waterSurface + 1, height * 0.3);
+    height = lerp(shoreSmooth, waterSurface - 0.1, shoreTerrainHeight);
+  } else {
+    // Beyond shore - gradually reduce height toward lake (basin effect)
+    const basinWidth = lakeConfig.radius * 2;
+    const basinDist = distToLake - lakeConfig.radius - lakeConfig.shoreWidth;
+    if (basinDist < basinWidth) {
+      const basinInfluence = 1 - basinDist / basinWidth;
+      const basinSmooth = basinInfluence * basinInfluence;
+      // Reduce terrain height near the lake
+      const minHeight = waterSurface + 2;
+      height = lerp(basinSmooth, height, Math.max(minHeight, height * 0.5));
     }
   }
 
   return height;
+}
+
+// Legacy function signatures for compatibility (redirects to lake-based)
+export function distanceToRiver(x: number, z: number, _riverPath: Vector3[]): number {
+  // Redirect to lake distance - this is a compatibility shim
+  const defaultLake: LakeConfig = { centerX: 0, centerZ: 0, radius: 35, depth: 4, shoreWidth: 15 };
+  return distanceToLake(x, z, defaultLake);
 }
 
 // Smoothstep function for smoother transitions
