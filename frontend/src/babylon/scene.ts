@@ -859,12 +859,12 @@ export function createReachScene(
     return cloudParent;
   }
 
-  // Spawn clouds - lower altitude so visible when zoomed out
-  for (let i = 0; i < 12; i++) {
-    const x = (Math.random() - 0.5) * 600;
-    const y = 40 + Math.random() * 35;
-    const z = (Math.random() - 0.5) * 600;
-    const scale = 0.4 + Math.random() * 0.5;
+  // Spawn clouds - lower altitude so visible when zoomed out (tripled amount)
+  for (let i = 0; i < 36; i++) {
+    const x = (Math.random() - 0.5) * 700;
+    const y = 40 + Math.random() * 40;
+    const z = (Math.random() - 0.5) * 700;
+    const scale = 0.35 + Math.random() * 0.55;
     createCloud(x, y, z, scale);
   }
 
@@ -1257,8 +1257,8 @@ export function createReachScene(
   // --- BIOME-BASED VEGETATION PLACEMENT ---
   // Trees spawn in forest zones, type determined by biome
 
-  // Random point sampling for forests - lots of trees!
-  for (let i = 0; i < 2500; i++) {
+  // Random point sampling for forests - dense trees!
+  for (let i = 0; i < 5000; i++) {
     const x = (Math.random() - 0.5) * groundSize * 0.95;
     const z = (Math.random() - 0.5) * groundSize * 0.95;
 
@@ -1268,12 +1268,13 @@ export function createReachScene(
     const biome = sampleBiome(x, z);
 
     // Trees in forest zones - higher spawn rate
-    if (biome.forestDensity > 0.15 && Math.random() < biome.forestDensity * 0.85) {
+    if (biome.forestDensity > 0.12 && Math.random() < biome.forestDensity * 0.9) {
       const scale = 0.45 + Math.random() * 0.55;
       const rotY = Math.random() * Math.PI * 2;
 
-      // Pine vs deciduous based on biome
-      if (Math.random() < biome.pineRatio) {
+      // More pines overall (40% base + biome ratio)
+      const pineChance = 0.4 + biome.pineRatio * 0.4;
+      if (Math.random() < pineChance) {
         pinePositions.push({ x, z, scale, rotY });
       } else {
         treePositions.push({ x, z, scale, rotY });
@@ -1345,6 +1346,23 @@ export function createReachScene(
     }
   }
 
+  // --- LAKE BOTTOM ROCKS ---
+  // Scatter rocks on the lake bed for realism
+  for (let i = 0; i < 120; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    // Mostly in the center and mid areas of the lake
+    const dist = Math.random() * lakeConfig.radius * 0.85;
+    const x = lakeConfig.centerX + Math.cos(angle) * dist;
+    const z = lakeConfig.centerZ + Math.sin(angle) * dist;
+
+    // Smaller rocks underwater
+    lakeshoreRockPositions.push({
+      x, z,
+      scale: 0.15 + Math.random() * 0.4,
+      rotY: Math.random() * Math.PI * 2
+    });
+  }
+
   // Regular rocks scattered elsewhere
   for (let i = 0; i < 80; i++) {
     const angle = Math.random() * Math.PI * 2;
@@ -1381,6 +1399,7 @@ export function createReachScene(
 
   // Deciduous tree foliage (foliage center at 4.5 units up)
   const treeFoliageMatrices = new Float32Array(treePositions.length * 16);
+  const treeFoliageColors = new Float32Array(treePositions.length * 4);
   treePositions.forEach((pos, i) => {
     const terrainY = getTerrainHeight(pos.x, pos.z);
     const foliageY = terrainY + 4.5 * pos.scale; // Foliage center offset
@@ -1392,11 +1411,22 @@ export function createReachScene(
       tempMatrix
     );
     tempMatrix.copyToArray(treeFoliageMatrices, i * 16);
+
+    // Color variation: darker greens with slight variation
+    const colorVar = 0.7 + Math.random() * 0.25;
+    const hueShift = (Math.random() - 0.5) * 0.08;
+    treeFoliageColors[i * 4] = (0.18 + hueShift * 0.3) * colorVar;     // R - darker
+    treeFoliageColors[i * 4 + 1] = (0.38 + hueShift) * colorVar;       // G - darker
+    treeFoliageColors[i * 4 + 2] = (0.15 - hueShift * 0.2) * colorVar; // B - darker
+    treeFoliageColors[i * 4 + 3] = 1.0;                                 // A
   });
   treeFoliageTemplate.isVisible = true;
   treeFoliageTemplate.thinInstanceSetBuffer('matrix', treeFoliageMatrices, 16);
+  treeFoliageTemplate.thinInstanceSetBuffer('color', treeFoliageColors, 4);
   treeFoliageTemplate.receiveShadows = true;
   shadowGenerator.addShadowCaster(treeFoliageTemplate);
+  // Enable per-instance colors
+  (treeFoliageTemplate.material as PBRMaterial).albedoColor = new Color3(1, 1, 1);
 
   // Pine tree trunks (trunk center at 2 units up)
   const pineTrunkMatrices = new Float32Array(pinePositions.length * 16);
@@ -1419,6 +1449,7 @@ export function createReachScene(
   // Pine tree foliage (foliage starts at trunk top, around 4 units up)
   if (pineFoliageTemplate) {
     const pineFoliageMatrices = new Float32Array(pinePositions.length * 16);
+    const pineFoliageColors = new Float32Array(pinePositions.length * 4);
     pinePositions.forEach((pos, i) => {
       const terrainY = getTerrainHeight(pos.x, pos.z);
       const foliageY = terrainY + 4 * pos.scale; // Pine foliage base offset
@@ -1429,11 +1460,22 @@ export function createReachScene(
         tempMatrix
       );
       tempMatrix.copyToArray(pineFoliageMatrices, i * 16);
+
+      // Color variation: very dark greens with minimal variation
+      const colorVar = 0.6 + Math.random() * 0.2;
+      const hueShift = (Math.random() - 0.5) * 0.05;
+      pineFoliageColors[i * 4] = (0.08 + hueShift * 0.2) * colorVar;     // R - very dark
+      pineFoliageColors[i * 4 + 1] = (0.22 + hueShift) * colorVar;       // G - dark
+      pineFoliageColors[i * 4 + 2] = (0.08 - hueShift * 0.1) * colorVar; // B - very dark
+      pineFoliageColors[i * 4 + 3] = 1.0;                                 // A
     });
     pineFoliageTemplate.isVisible = true;
     pineFoliageTemplate.thinInstanceSetBuffer('matrix', pineFoliageMatrices, 16);
+    pineFoliageTemplate.thinInstanceSetBuffer('color', pineFoliageColors, 4);
     pineFoliageTemplate.receiveShadows = true;
     shadowGenerator.addShadowCaster(pineFoliageTemplate);
+    // Enable per-instance colors
+    (pineFoliageTemplate.material as PBRMaterial).albedoColor = new Color3(1, 1, 1);
   }
 
   // Bushes (center at ~0.5 units up)
@@ -1485,9 +1527,9 @@ export function createReachScene(
 
   const waterLevel = getWaterLevel(lakeConfig);
 
-  // Create a simple disc for the lake water
+  // Create a disc for the lake water - larger to fill edge gaps
   const lake = MeshBuilder.CreateDisc('lake', {
-    radius: lakeConfig.radius * 1.05, // Slightly larger than lake to cover edges
+    radius: lakeConfig.radius * 1.15, // Larger to ensure full coverage
     tessellation: 64,
     sideOrientation: Mesh.DOUBLESIDE,
   }, scene);
@@ -1496,74 +1538,66 @@ export function createReachScene(
   lake.rotation.x = Math.PI / 2;
   lake.position = new Vector3(lakeConfig.centerX, waterLevel, lakeConfig.centerZ);
 
-  // EXACT same material as river
+  // Light blue transparent lake water
   const lakeMat = new StandardMaterial('lakeMat', scene);
-  lakeMat.diffuseColor = new Color3(0.3, 0.5, 0.6);
-  lakeMat.specularColor = new Color3(0.6, 0.7, 0.8);
-  lakeMat.specularPower = 64;
-  lakeMat.alpha = 0.65;
+  lakeMat.diffuseColor = new Color3(0.3, 0.55, 0.7); // Light blue
+  lakeMat.specularColor = new Color3(0.8, 0.9, 1.0);
+  lakeMat.specularPower = 128;
+  lakeMat.alpha = 0.55; // More see-through
   lakeMat.backFaceCulling = false;
 
-  // EXACT same texture as river
-  const waterTexSize = 256;
-  const waterTexture = new DynamicTexture('lakeWaterTex', waterTexSize, scene, false);
-  const waterCtx = waterTexture.getContext() as CanvasRenderingContext2D;
+  // Create noise texture for water surface ripples
+  const noiseSize = 256;
+  const noiseTex = new DynamicTexture('waterNoise', noiseSize, scene, true);
+  const noiseCtx = noiseTex.getContext() as CanvasRenderingContext2D;
 
-  // Light blue-green base
-  waterCtx.fillStyle = '#5a9ab0';
-  waterCtx.fillRect(0, 0, waterTexSize, waterTexSize);
-
-  // Flow lines - white/light streaks
-  for (let i = 0; i < 60; i++) {
-    const y = Math.random() * waterTexSize;
-    const x = Math.random() * waterTexSize;
-    const length = 20 + Math.random() * 60;
-
-    const gradient = waterCtx.createLinearGradient(x, y, x + length, y);
-    gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-    gradient.addColorStop(0.3, 'rgba(200, 230, 245, 0.4)');
-    gradient.addColorStop(0.7, 'rgba(200, 230, 245, 0.4)');
-    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-    waterCtx.strokeStyle = gradient;
-    waterCtx.lineWidth = 1 + Math.random() * 2;
-    waterCtx.beginPath();
-    waterCtx.moveTo(x, y);
-    waterCtx.lineTo(x + length, y + (Math.random() - 0.5) * 4);
-    waterCtx.stroke();
+  // Generate Perlin-like noise pattern
+  const noiseData = noiseCtx.createImageData(noiseSize, noiseSize);
+  for (let y = 0; y < noiseSize; y++) {
+    for (let x = 0; x < noiseSize; x++) {
+      const idx = (y * noiseSize + x) * 4;
+      // Multi-octave noise for natural look
+      let noise = 0;
+      let amp = 1;
+      let freq = 1;
+      for (let o = 0; o < 4; o++) {
+        const nx = x * freq / 30;
+        const ny = y * freq / 30;
+        noise += (Math.sin(nx * 12.9898 + ny * 78.233) * 43758.5453 % 1) * amp;
+        amp *= 0.5;
+        freq *= 2;
+      }
+      noise = noise / 2 + 0.5; // Normalize to 0-1
+      const val = Math.floor(128 + noise * 60); // Light variation around mid-gray
+      noiseData.data[idx] = val;
+      noiseData.data[idx + 1] = val + 10; // Slight blue tint
+      noiseData.data[idx + 2] = val + 20;
+      noiseData.data[idx + 3] = 255;
+    }
   }
+  noiseCtx.putImageData(noiseData, 0, 0);
+  noiseTex.update();
+  noiseTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  noiseTex.wrapV = Texture.WRAP_ADDRESSMODE;
 
-  // Small highlight spots
-  for (let i = 0; i < 30; i++) {
-    const x = Math.random() * waterTexSize;
-    const y = Math.random() * waterTexSize;
-    waterCtx.fillStyle = `rgba(220, 240, 255, ${0.2 + Math.random() * 0.2})`;
-    waterCtx.beginPath();
-    waterCtx.arc(x, y, 1 + Math.random() * 3, 0, Math.PI * 2);
-    waterCtx.fill();
-  }
+  lakeMat.bumpTexture = noiseTex;
+  (lakeMat.bumpTexture as Texture).level = 0.3; // Subtle bump
+  (lakeMat.bumpTexture as Texture).uScale = 8;
+  (lakeMat.bumpTexture as Texture).vScale = 8;
 
-  waterTexture.update();
-
-  lakeMat.diffuseTexture = waterTexture;
-  (lakeMat.diffuseTexture as Texture).uScale = 4;
-  (lakeMat.diffuseTexture as Texture).vScale = 4;
-  (lakeMat.diffuseTexture as Texture).wrapU = Texture.WRAP_ADDRESSMODE;
-  (lakeMat.diffuseTexture as Texture).wrapV = Texture.WRAP_ADDRESSMODE;
-
-  // Slight emissive for that water glow
-  lakeMat.emissiveColor = new Color3(0.05, 0.1, 0.12);
+  // Slight emissive for water glow
+  lakeMat.emissiveColor = new Color3(0.05, 0.1, 0.15);
 
   lake.material = lakeMat;
 
-  // Ripple animation - gentle oscillating UV movement
-  let waterTime = 0;
+  // Animate the noise texture UV for ripple movement
+  let rippleTime = 0;
   scene.onBeforeRenderObservable.add(() => {
-    waterTime += 0.0008;
-    if (lakeMat.diffuseTexture) {
-      // Subtle multi-frequency oscillation for natural ripple effect
-      (lakeMat.diffuseTexture as Texture).uOffset = Math.sin(waterTime) * 0.02 + Math.sin(waterTime * 1.7) * 0.01;
-      (lakeMat.diffuseTexture as Texture).vOffset = Math.cos(waterTime * 0.8) * 0.02 + Math.cos(waterTime * 1.3) * 0.01;
+    rippleTime += 0.0003;
+    if (lakeMat.bumpTexture) {
+      // Slow drifting motion
+      (lakeMat.bumpTexture as Texture).uOffset = Math.sin(rippleTime) * 0.1 + rippleTime * 0.02;
+      (lakeMat.bumpTexture as Texture).vOffset = Math.cos(rippleTime * 0.7) * 0.1 + rippleTime * 0.015;
     }
   });
 

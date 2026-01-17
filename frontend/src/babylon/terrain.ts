@@ -139,17 +139,21 @@ export function generateTerrainHeight(
 
   // Lake bed - below water level
   if (distToLake < lakeConfig.radius) {
-    // Inside the lake - create bowl-shaped depression
+    // Inside the lake - create natural bowl-shaped depression
     const lakeInfluence = 1 - distToLake / lakeConfig.radius;
-    const lakeSmooth = lakeInfluence * lakeInfluence;
+    // Smoother falloff for more natural bowl shape
+    const lakeSmooth = lakeInfluence * lakeInfluence * (3 - 2 * lakeInfluence);
 
-    // Deeper toward center, starting from water surface
-    const lakebedDepth = lakeConfig.depth * (0.3 + 0.7 * lakeSmooth);
+    // Gradual depth - shallow at edges, deep in center
+    const edgeDepth = lakeConfig.depth * 0.4;  // Shallow near shore
+    const centerDepth = lakeConfig.depth * 1.2; // Deeper in center
+    const lakebedDepth = edgeDepth + (centerDepth - edgeDepth) * lakeSmooth;
     height = waterSurface - lakebedDepth;
 
-    // Add slight lakebed variation
-    const bedNoise = fbm(x * 0.05, z * 0.05, 2, 0.5, 2.0, 1.0) * 0.5;
-    height += bedNoise;
+    // Add natural lakebed variation - bumps and dips
+    const bedNoise = fbm(x * 0.08, z * 0.08, 3, 0.5, 2.0, 1.0) * 0.8;
+    const fineNoise = fbm(x * 0.2, z * 0.2, 2, 0.5, 2.0, 1.0) * 0.3;
+    height += bedNoise + fineNoise;
   } else if (distToLake < lakeConfig.radius + lakeConfig.shoreWidth) {
     // Shore/beach area - slopes up from water edge to terrain
     const shoreProgress = (distToLake - lakeConfig.radius) / lakeConfig.shoreWidth;
