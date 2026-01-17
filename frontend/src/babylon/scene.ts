@@ -173,9 +173,14 @@ export function createReachScene(
   const shadowGenerator = new ShadowGenerator(4096, sunLight); // Higher res for quality
   shadowGenerator.usePercentageCloserFiltering = true; // PCF for soft shadows
   shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
-  shadowGenerator.bias = 0.001;
-  shadowGenerator.normalBias = 0.02;
-  shadowGenerator.setDarkness(0.4); // Not too dark
+  shadowGenerator.bias = 0.0005;
+  shadowGenerator.normalBias = 0.01;
+  shadowGenerator.setDarkness(0.35); // Visible shadows
+  shadowGenerator.frustumEdgeFalloff = 0.5; // Soft edges at frustum bounds
+
+  // Ensure shadows cover the terrain properly
+  sunLight.shadowMinZ = 1;
+  sunLight.shadowMaxZ = 500;
 
   // ===========================================
   // SSAO (Screen Space Ambient Occlusion)
@@ -386,19 +391,18 @@ export function createReachScene(
   }
 
   // ===========================================
-  // TEXTURE SPLATTING TERRAIN (Supreme Commander Style)
+  // BIOME-BASED TERRAIN SYSTEM (Minecraft-style)
   // ===========================================
-  // Uses TerrainMaterial with procedural splat map
-  // Red = Mud/Riverbed, Green = Grass, Blue = Rock
+  // Procedural biomes: Grassland, Forest, Riverbank
+  // Red = Riverbank (sand + pebbles), Green = Grass, Blue = Forest floor
 
-  // Noise function for texture generation
+  // Noise functions for terrain/biome generation
   const texNoise = (x: number, y: number, seed: number = 0): number => {
     const n = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
     return n - Math.floor(n);
   };
 
-  // FBM noise for natural variation
-  const texFbm = (x: number, y: number, octaves: number = 6): number => {
+  const texFbm = (x: number, y: number, octaves: number = 6, seed: number = 0): number => {
     let value = 0, amplitude = 1, frequency = 1, maxValue = 0;
     for (let i = 0; i < octaves; i++) {
       const ix = Math.floor(x * frequency);
@@ -407,10 +411,10 @@ export function createReachScene(
       const fy = y * frequency - iy;
       const sx = fx * fx * (3 - 2 * fx);
       const sy = fy * fy * (3 - 2 * fy);
-      const n00 = texNoise(ix, iy, i);
-      const n10 = texNoise(ix + 1, iy, i);
-      const n01 = texNoise(ix, iy + 1, i);
-      const n11 = texNoise(ix + 1, iy + 1, i);
+      const n00 = texNoise(ix, iy, i + seed);
+      const n10 = texNoise(ix + 1, iy, i + seed);
+      const n01 = texNoise(ix, iy + 1, i + seed);
+      const n11 = texNoise(ix + 1, iy + 1, i + seed);
       const nx0 = n00 + sx * (n10 - n00);
       const nx1 = n01 + sx * (n11 - n01);
       value += (nx0 + sy * (nx1 - nx0)) * amplitude;
@@ -421,8 +425,60 @@ export function createReachScene(
     return value / maxValue;
   };
 
-  // --- Generate Splat/Mix Map (based on height, slope, river proximity) ---
-  const splatSize = 512;
+  // --- BIOME MAP GENERATION ---
+  // Generate distinct forest zones using large-scale noise
+  const biomeScale = 0.01; // Slightly larger scale for bigger forest patches
+  const getForestDensity = (x: number, z: number): number => {
+    // Main forest noise - large blobs
+    const forestNoise = texFbm(x * biomeScale, z * biomeScale, 3, 100);
+    // Create more forest with lower threshold
+    const threshold = 0.38; // Lower = more forest coverage
+    if (forestNoise < threshold) return 0;
+    // Smooth falloff from threshold
+    const density = (forestNoise - threshold) / (1 - threshold);
+    return Math.min(1, density * 1.8); // Stronger density boost
+  };
+
+  // Determine if area is pine forest vs deciduous (separate noise for distinct zones)
+  const getPineRatio = (x: number, z: number): number => {
+    const pineNoise = texFbm(x * biomeScale * 0.8, z * biomeScale * 0.8, 3, 300);
+    // Higher elevation = more pine
+    const height = getTerrainHeight(x, z);
+    const heightBonus = Math.max(0, (height - 3) / 12);
+    // Create distinct pine vs deciduous zones
+    const baseRatio = pineNoise > 0.5 ? 0.85 : 0.15;
+    return Math.min(1, baseRatio + heightBonus * 0.3);
+  };
+
+  // Store biome data for vegetation placement later
+  const biomeMapSize = 256; // Higher resolution for smoother biome transitions
+  const biomeData: { forestDensity: number; pineRatio: number }[][] = [];
+  for (let bz = 0; bz < biomeMapSize; bz++) {
+    biomeData[bz] = [];
+    for (let bx = 0; bx < biomeMapSize; bx++) {
+      const worldX = (bx / biomeMapSize - 0.5) * groundSize;
+      const worldZ = (bz / biomeMapSize - 0.5) * groundSize;
+      const riverDist = distanceToRiver(worldX, worldZ, riverPath);
+      // No forest too close to river
+      let forestDensity = riverDist > riverConfig.width * 2 ? getForestDensity(worldX, worldZ) : 0;
+      biomeData[bz][bx] = {
+        forestDensity,
+        pineRatio: getPineRatio(worldX, worldZ)
+      };
+    }
+  }
+
+  // Helper to sample biome at world position
+  const sampleBiome = (worldX: number, worldZ: number) => {
+    const bx = Math.floor((worldX / groundSize + 0.5) * biomeMapSize);
+    const bz = Math.floor((worldZ / groundSize + 0.5) * biomeMapSize);
+    const clampedBx = Math.max(0, Math.min(biomeMapSize - 1, bx));
+    const clampedBz = Math.max(0, Math.min(biomeMapSize - 1, bz));
+    return biomeData[clampedBz]?.[clampedBx] || { forestDensity: 0, pineRatio: 0.5 };
+  };
+
+  // --- Generate Splat/Mix Map ---
+  const splatSize = 1024; // Higher resolution to avoid visible squares
   const splatTex = new DynamicTexture('splatMap', splatSize, scene, false);
   const splatCtx = splatTex.getContext() as CanvasRenderingContext2D;
   const splatData = splatCtx.createImageData(splatSize, splatSize);
@@ -431,108 +487,163 @@ export function createReachScene(
   for (let py = 0; py < splatSize; py++) {
     for (let px = 0; px < splatSize; px++) {
       const pi = (py * splatSize + px) * 4;
-
-      // Map pixel to world coordinates
+      // Fix coordinate mapping: image Y is flipped relative to world Z
       const worldX = (px / splatSize - 0.5) * groundSize;
-      const worldZ = (py / splatSize - 0.5) * groundSize;
+      const worldZ = (0.5 - py / splatSize) * groundSize;
 
-      // Get terrain height and river distance
       const height = getTerrainHeight(worldX, worldZ);
       const riverDist = distanceToRiver(worldX, worldZ, riverPath);
+      const biome = sampleBiome(worldX, worldZ);
 
-      // Calculate slope by sampling nearby heights
+      // Calculate slope
       const sampleDist = groundSize / splatSize * 2;
       const hL = getTerrainHeight(worldX - sampleDist, worldZ);
       const hR = getTerrainHeight(worldX + sampleDist, worldZ);
       const hU = getTerrainHeight(worldX, worldZ - sampleDist);
       const hD = getTerrainHeight(worldX, worldZ + sampleDist);
-      const slopeX = (hR - hL) / (sampleDist * 2);
-      const slopeZ = (hD - hU) / (sampleDist * 2);
-      const slope = Math.sqrt(slopeX * slopeX + slopeZ * slopeZ);
+      const slope = Math.sqrt(((hR - hL) / (sampleDist * 2)) ** 2 + ((hD - hU) / (sampleDist * 2)) ** 2);
 
-      // Add noise for natural variation
-      const noise = texFbm(worldX * 0.02, worldZ * 0.02, 4) * 0.3;
+      // Add noise for natural edges - higher frequency for more organic look
+      const edgeNoise = texFbm(worldX * 0.08, worldZ * 0.08, 4) * 0.3;
+      const fineNoise = texFbm(worldX * 0.2, worldZ * 0.2, 2) * 0.15;
 
-      // Determine weights for each texture
-      let mudWeight = 0;    // Red channel
-      let grassWeight = 0;  // Green channel
-      let rockWeight = 0;   // Blue channel
+      let riverbankWeight = 0;  // Red: sand/pebbles
+      let grassWeight = 0;       // Green: open grass
+      let forestWeight = 0;      // Blue: forest floor
 
-      // Mud/Riverbed: near river or very low areas
-      const riverFalloff = Math.max(0, 1 - riverDist / (riverConfig.width * 2.5));
-      mudWeight = riverFalloff * riverFalloff;
-      // Also add mud in low areas
-      if (height < -2) {
-        mudWeight = Math.max(mudWeight, 0.8 + noise * 0.2);
-      } else if (height < 1) {
-        const lowBlend = 1 - (height + 2) / 3;
-        mudWeight = Math.max(mudWeight, lowBlend * 0.5);
+      // RIVERBANK: Cover entire river bottom and sides, fade into grass
+      const bankEnd = riverConfig.width * 1.5;   // Where bank fades to grass
+
+      if (riverDist < bankEnd) {
+        if (riverDist < riverConfig.width * 0.8) {
+          // Inside river channel - full riverbank/mud texture
+          riverbankWeight = 1.0;
+        } else {
+          // Transition zone from river edge to grass
+          const fadeProgress = (riverDist - riverConfig.width * 0.8) / (bankEnd - riverConfig.width * 0.8);
+          // Smoothstep for gradual transition
+          const smoothFade = fadeProgress * fadeProgress * (3 - 2 * fadeProgress);
+          riverbankWeight = 1 - smoothFade;
+        }
+        // Add noise for organic edges at the grass boundary
+        if (riverDist > riverConfig.width * 0.5) {
+          riverbankWeight *= (1 + edgeNoise * 0.5);
+        }
+        riverbankWeight = Math.max(0, Math.min(1, riverbankWeight));
       }
 
-      // Rock: steep slopes
-      const slopeThreshold = 0.4;
-      if (slope > slopeThreshold) {
-        const rockBlend = Math.min(1, (slope - slopeThreshold) / 0.3);
-        rockWeight = rockBlend * rockBlend + noise * 0.2;
-      }
-      // Also rock at high elevations
-      if (height > 12) {
-        const highBlend = Math.min(1, (height - 12) / 5);
-        rockWeight = Math.max(rockWeight, highBlend * 0.7 + noise * 0.3);
+      // Steeper slopes near water also get bank texture
+      if (riverDist < riverConfig.width * 2 && slope > 0.3) {
+        const slopeBank = slope * 0.7 * (1 - riverDist / (riverConfig.width * 2));
+        riverbankWeight = Math.max(riverbankWeight, slopeBank);
       }
 
-      // Grass: everything else (base layer)
-      grassWeight = 1 - Math.max(mudWeight, rockWeight);
-      grassWeight = Math.max(0, grassWeight + noise * 0.15);
+      // FOREST FLOOR: Under trees with smooth edges
+      const rawForest = biome.forestDensity * (1 + edgeNoise * 0.3);
+      // Smoothstep the forest density for softer transitions
+      forestWeight = rawForest * rawForest * (3 - 2 * rawForest);
+      // Reduce forest on steep slopes
+      if (slope > 0.4) forestWeight *= (1 - (slope - 0.4) * 2);
+      forestWeight = Math.max(0, Math.min(1, forestWeight));
 
-      // Normalize weights
-      const totalWeight = mudWeight + grassWeight + rockWeight;
-      if (totalWeight > 0) {
-        mudWeight /= totalWeight;
-        grassWeight /= totalWeight;
-        rockWeight /= totalWeight;
+      // Don't put forest floor too close to river
+      if (riverDist < riverConfig.width * 1.5) {
+        forestWeight *= Math.max(0, (riverDist - riverConfig.width) / (riverConfig.width * 0.5));
+      }
+
+      // GRASS: Everything else - smooth blend
+      grassWeight = 1 - Math.max(riverbankWeight * 0.9, forestWeight * 0.85);
+      grassWeight = Math.max(0.05, grassWeight); // Always some grass showing through
+
+      // Soft normalize - allow some overlap for smoother blending
+      const total = riverbankWeight + grassWeight + forestWeight;
+      if (total > 0) {
+        riverbankWeight /= total;
+        grassWeight /= total;
+        forestWeight /= total;
       } else {
         grassWeight = 1;
       }
 
-      // Write to splat map (RGB = mud, grass, rock)
-      splatPixels[pi] = Math.floor(mudWeight * 255);
+      splatPixels[pi] = Math.floor(riverbankWeight * 255);
       splatPixels[pi + 1] = Math.floor(grassWeight * 255);
-      splatPixels[pi + 2] = Math.floor(rockWeight * 255);
+      splatPixels[pi + 2] = Math.floor(forestWeight * 255);
       splatPixels[pi + 3] = 255;
     }
   }
+
+  // Apply blur to smooth transitions between biomes
+  const blurRadius = 3;
+  const blurredPixels = new Uint8ClampedArray(splatPixels.length);
+  for (let py = 0; py < splatSize; py++) {
+    for (let px = 0; px < splatSize; px++) {
+      let rSum = 0, gSum = 0, bSum = 0, count = 0;
+      for (let dy = -blurRadius; dy <= blurRadius; dy++) {
+        for (let dx = -blurRadius; dx <= blurRadius; dx++) {
+          const sx = Math.max(0, Math.min(splatSize - 1, px + dx));
+          const sy = Math.max(0, Math.min(splatSize - 1, py + dy));
+          const si = (sy * splatSize + sx) * 4;
+          rSum += splatPixels[si];
+          gSum += splatPixels[si + 1];
+          bSum += splatPixels[si + 2];
+          count++;
+        }
+      }
+      const di = (py * splatSize + px) * 4;
+      blurredPixels[di] = Math.floor(rSum / count);
+      blurredPixels[di + 1] = Math.floor(gSum / count);
+      blurredPixels[di + 2] = Math.floor(bSum / count);
+      blurredPixels[di + 3] = 255;
+    }
+  }
+  // Copy blurred data back
+  for (let i = 0; i < splatPixels.length; i++) {
+    splatPixels[i] = blurredPixels[i];
+  }
+
   splatCtx.putImageData(splatData, 0, 0);
   splatTex.update();
 
-  // --- Generate Tileable Detail Textures ---
+  // --- Generate Detail Textures ---
   const detailSize = 512;
 
-  // Mud/Riverbed texture (dark, wet)
-  const mudTex = new DynamicTexture('mudTex', detailSize, scene, true);
-  const mudCtx = mudTex.getContext() as CanvasRenderingContext2D;
-  const mudData = mudCtx.createImageData(detailSize, detailSize);
-  const mudPixels = mudData.data;
+  // RIVERBANK TEXTURE: Muddy dirt with pebbles
+  const riverbankTex = new DynamicTexture('riverbankTex', detailSize, scene, true);
+  const riverbankCtx = riverbankTex.getContext() as CanvasRenderingContext2D;
+  const riverbankData = riverbankCtx.createImageData(detailSize, detailSize);
+  const riverbankPixels = riverbankData.data;
   for (let ty = 0; ty < detailSize; ty++) {
     for (let tx = 0; tx < detailSize; tx++) {
       const ti = (ty * detailSize + tx) * 4;
-      const n1 = texFbm(tx / 40, ty / 40, 5);
+      const n1 = texFbm(tx / 35, ty / 35, 4);
       const n2 = texFbm(tx / 10, ty / 10, 3);
-      const combined = n1 * 0.7 + n2 * 0.3;
-      // Dark brown/gray mud colors
-      const base = 45 + combined * 35;
-      mudPixels[ti] = base + 10;     // R - slightly warmer
-      mudPixels[ti + 1] = base - 5;  // G
-      mudPixels[ti + 2] = base - 15; // B - less blue
-      mudPixels[ti + 3] = 255;
+
+      // Pebble detection
+      const pebbleNoise = texFbm(tx / 7, ty / 7, 2, 50);
+      const isPebble = pebbleNoise > 0.68;
+
+      if (isPebble) {
+        // Gray-brown pebbles
+        const pebbleShade = 85 + n2 * 40;
+        riverbankPixels[ti] = pebbleShade + 5;
+        riverbankPixels[ti + 1] = pebbleShade;
+        riverbankPixels[ti + 2] = pebbleShade - 10;
+      } else {
+        // Darker muddy/dirt bank - not bright sand
+        const base = 90 + n1 * 35 + n2 * 20;
+        riverbankPixels[ti] = base + 10;      // R - slight warmth
+        riverbankPixels[ti + 1] = base - 5;   // G
+        riverbankPixels[ti + 2] = base - 20;  // B - less blue
+      }
+      riverbankPixels[ti + 3] = 255;
     }
   }
-  mudCtx.putImageData(mudData, 0, 0);
-  mudTex.update();
-  mudTex.wrapU = Texture.WRAP_ADDRESSMODE;
-  mudTex.wrapV = Texture.WRAP_ADDRESSMODE;
+  riverbankCtx.putImageData(riverbankData, 0, 0);
+  riverbankTex.update();
+  riverbankTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  riverbankTex.wrapV = Texture.WRAP_ADDRESSMODE;
 
-  // Grass texture (varied greens)
+  // GRASS TEXTURE: Dark, rich grass
   const grassTex = new DynamicTexture('grassTex', detailSize, scene, true);
   const grassCtx = grassTex.getContext() as CanvasRenderingContext2D;
   const grassData = grassCtx.createImageData(detailSize, detailSize);
@@ -540,14 +651,14 @@ export function createReachScene(
   for (let ty = 0; ty < detailSize; ty++) {
     for (let tx = 0; tx < detailSize; tx++) {
       const ti = (ty * detailSize + tx) * 4;
-      const n1 = texFbm(tx / 50, ty / 50, 4);
-      const n2 = texFbm(tx / 12, ty / 12, 3);
+      const n1 = texFbm(tx / 60, ty / 60, 4);
+      const n2 = texFbm(tx / 15, ty / 15, 3);
       const n3 = texFbm(tx / 4, ty / 4, 2);
-      const combined = n1 * 0.4 + n2 * 0.4 + n3 * 0.2;
-      // Green grass with variation
-      grassPixels[ti] = 75 + combined * 50;      // R
-      grassPixels[ti + 1] = 120 + combined * 45; // G - dominant
-      grassPixels[ti + 2] = 55 + combined * 40;  // B
+      const combined = n1 * 0.35 + n2 * 0.4 + n3 * 0.25;
+      // Much darker grass - forest green
+      grassPixels[ti] = 45 + combined * 30;       // R - darker
+      grassPixels[ti + 1] = 85 + combined * 35;   // G - still green but darker
+      grassPixels[ti + 2] = 35 + combined * 25;   // B - darker
       grassPixels[ti + 3] = 255;
     }
   }
@@ -556,51 +667,64 @@ export function createReachScene(
   grassTex.wrapU = Texture.WRAP_ADDRESSMODE;
   grassTex.wrapV = Texture.WRAP_ADDRESSMODE;
 
-  // Rock texture (gray with cracks)
-  const rockTex = new DynamicTexture('rockTex', detailSize, scene, true);
-  const rockCtx = rockTex.getContext() as CanvasRenderingContext2D;
-  const rockData = rockCtx.createImageData(detailSize, detailSize);
-  const rockPixels = rockData.data;
+  // FOREST FLOOR TEXTURE: Darker grass with subtle leaf litter
+  const forestFloorTex = new DynamicTexture('forestFloorTex', detailSize, scene, true);
+  const forestFloorCtx = forestFloorTex.getContext() as CanvasRenderingContext2D;
+  const forestFloorData = forestFloorCtx.createImageData(detailSize, detailSize);
+  const forestFloorPixels = forestFloorData.data;
   for (let ty = 0; ty < detailSize; ty++) {
     for (let tx = 0; tx < detailSize; tx++) {
       const ti = (ty * detailSize + tx) * 4;
-      const n1 = texFbm(tx / 60, ty / 60, 5);
-      const n2 = texFbm(tx / 15, ty / 15, 4);
+      const n1 = texFbm(tx / 50, ty / 50, 4);
+      const n2 = texFbm(tx / 15, ty / 15, 3);
       const n3 = texFbm(tx / 5, ty / 5, 2);
-      const combined = n1 * 0.5 + n2 * 0.35 + n3 * 0.15;
-      // Gray rock
-      const base = 90 + combined * 60;
-      rockPixels[ti] = base;         // R
-      rockPixels[ti + 1] = base - 3; // G - slightly cooler
-      rockPixels[ti + 2] = base - 5; // B
-      rockPixels[ti + 3] = 255;
+      const combined = n1 * 0.4 + n2 * 0.4 + n3 * 0.2;
+
+      // Occasional leaf/debris spots
+      const leafNoise = texFbm(tx / 10, ty / 10, 2, 75);
+      const isDebris = leafNoise > 0.7;
+
+      if (isDebris) {
+        // Subtle brown debris
+        const base = 50 + combined * 30;
+        forestFloorPixels[ti] = base + 15;
+        forestFloorPixels[ti + 1] = base + 5;
+        forestFloorPixels[ti + 2] = base - 10;
+      } else {
+        // Dark forest grass/moss - darker than regular grass
+        forestFloorPixels[ti] = 50 + combined * 35;      // R
+        forestFloorPixels[ti + 1] = 85 + combined * 40;  // G - still green but darker
+        forestFloorPixels[ti + 2] = 40 + combined * 30;  // B
+      }
+      forestFloorPixels[ti + 3] = 255;
     }
   }
-  rockCtx.putImageData(rockData, 0, 0);
-  rockTex.update();
-  rockTex.wrapU = Texture.WRAP_ADDRESSMODE;
-  rockTex.wrapV = Texture.WRAP_ADDRESSMODE;
+  forestFloorCtx.putImageData(forestFloorData, 0, 0);
+  forestFloorTex.update();
+  forestFloorTex.wrapU = Texture.WRAP_ADDRESSMODE;
+  forestFloorTex.wrapV = Texture.WRAP_ADDRESSMODE;
 
-  // --- Create Terrain Material with Splatting ---
+  // --- Create Terrain Material ---
   const terrainMat = new TerrainMaterial('terrainMat', scene);
   terrainMat.mixTexture = splatTex;
+  terrainMat.specularColor = new Color3(0.1, 0.1, 0.1); // Low specular for matte look
+  terrainMat.specularPower = 8;
 
-  // Texture 1 (Red channel) - Mud/Riverbed
-  terrainMat.diffuseTexture1 = mudTex;
-  terrainMat.diffuseTexture1.uScale = 60;
-  terrainMat.diffuseTexture1.vScale = 60;
+  // Texture 1 (Red) - Riverbank with pebbles
+  terrainMat.diffuseTexture1 = riverbankTex;
+  terrainMat.diffuseTexture1.uScale = 70;
+  terrainMat.diffuseTexture1.vScale = 70;
 
-  // Texture 2 (Green channel) - Grass
+  // Texture 2 (Green) - Main grass
   terrainMat.diffuseTexture2 = grassTex;
   terrainMat.diffuseTexture2.uScale = 80;
   terrainMat.diffuseTexture2.vScale = 80;
 
-  // Texture 3 (Blue channel) - Rock
-  terrainMat.diffuseTexture3 = rockTex;
-  terrainMat.diffuseTexture3.uScale = 50;
-  terrainMat.diffuseTexture3.vScale = 50;
+  // Texture 3 (Blue) - Forest floor
+  terrainMat.diffuseTexture3 = forestFloorTex;
+  terrainMat.diffuseTexture3.uScale = 60;
+  terrainMat.diffuseTexture3.vScale = 60;
 
-  // Apply material
   ground.material = terrainMat;
   ground.receiveShadows = true;
 
@@ -887,8 +1011,8 @@ export function createReachScene(
       // Dark texture with alpha for shadow overlay
       cloudPixels[ci] = 0;
       cloudPixels[ci + 1] = 0;
-      cloudPixels[ci + 2] = 5;
-      cloudPixels[ci + 3] = shadowStrength * 255;
+      cloudPixels[ci + 2] = 10;
+      cloudPixels[ci + 3] = Math.floor(shadowStrength * 255);
     }
   }
   shadowCtx.putImageData(cloudImgData, 0, 0);
@@ -915,19 +1039,19 @@ export function createReachScene(
 
   // Material with alpha blending for shadow overlay
   const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
-  cloudShadowMat.diffuseTexture = cloudShadowTex;
-  cloudShadowMat.diffuseTexture.hasAlpha = true;
-  cloudShadowMat.diffuseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
-  cloudShadowMat.diffuseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
-  (cloudShadowMat.diffuseTexture as Texture).uScale = 0.6; // Large clouds
-  (cloudShadowMat.diffuseTexture as Texture).vScale = 0.6;
-  cloudShadowMat.useAlphaFromDiffuseTexture = true;
-  cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
+  cloudShadowMat.opacityTexture = cloudShadowTex; // Use opacity texture for alpha
+  cloudShadowMat.opacityTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+  cloudShadowMat.opacityTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+  (cloudShadowMat.opacityTexture as Texture).uScale = 0.6; // Large clouds
+  (cloudShadowMat.opacityTexture as Texture).vScale = 0.6;
+  cloudShadowMat.diffuseColor = new Color3(0.02, 0.02, 0.03); // Very dark but not pure black
   cloudShadowMat.specularColor = new Color3(0, 0, 0);
   cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
   cloudShadowMat.disableLighting = true;
   cloudShadowMat.backFaceCulling = true;
+  cloudShadowMat.alpha = 1.0;
   cloudShadowPlane.material = cloudShadowMat;
+  cloudShadowPlane.visibility = 1.0;
 
   // Don't receive shadows or interfere with picking
   cloudShadowPlane.receiveShadows = false;
@@ -935,9 +1059,9 @@ export function createReachScene(
 
   // Animate UV offset for rolling shadows (very slow drift)
   scene.onBeforeRenderObservable.add(() => {
-    const time = performance.now() * 0.000002; // Slow majestic drift
-    (cloudShadowMat.diffuseTexture as Texture).uOffset = time;
-    (cloudShadowMat.diffuseTexture as Texture).vOffset = time * 0.3;
+    const time = performance.now() * 0.000003; // Slow majestic drift
+    (cloudShadowMat.opacityTexture as Texture).uOffset = time;
+    (cloudShadowMat.opacityTexture as Texture).vOffset = time * 0.4;
   });
 
   // ===========================================
@@ -1118,49 +1242,33 @@ export function createReachScene(
   const pinePositions: InstanceData[] = [];
   const bushPositions: InstanceData[] = [];
   const rockPositions: InstanceData[] = [];
+  const riverbankRockPositions: InstanceData[] = [];
 
   // Helper to check river distance
   const isValidPosition = (x: number, z: number, minDist: number) => {
     return distanceToRiver(x, z, riverPath) >= riverConfig.width * minDist;
   };
 
-  // Collect deciduous tree positions
-  for (let i = 0; i < 250; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 25 + Math.random() * 170;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    if (isValidPosition(x, z, 2.5)) {
-      treePositions.push({ x, z, scale: 0.6 + Math.random() * 0.7, rotY: Math.random() * Math.PI * 2 });
-    }
-  }
+  // --- BIOME-BASED VEGETATION PLACEMENT ---
+  // Trees spawn in forest zones, type determined by biome
 
-  // Collect pine tree positions
-  for (let i = 0; i < 220; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 30 + Math.random() * 175;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    if (isValidPosition(x, z, 2.5)) {
-      pinePositions.push({ x, z, scale: 0.5 + Math.random() * 0.7, rotY: Math.random() * Math.PI * 2 });
-    }
-  }
+  // Random point sampling for forests - lots of trees!
+  for (let i = 0; i < 2500; i++) {
+    const x = (Math.random() - 0.5) * groundSize * 0.95;
+    const z = (Math.random() - 0.5) * groundSize * 0.95;
 
-  // Tree clusters
-  for (let cluster = 0; cluster < 20; cluster++) {
-    const clusterAngle = Math.random() * Math.PI * 2;
-    const clusterRadius = 60 + Math.random() * 120;
-    const clusterX = Math.cos(clusterAngle) * clusterRadius;
-    const clusterZ = Math.sin(clusterAngle) * clusterRadius;
-    if (!isValidPosition(clusterX, clusterZ, 3)) continue;
+    const riverDist = distanceToRiver(x, z, riverPath);
+    if (riverDist < riverConfig.width * 2) continue;
 
-    const treesInCluster = 5 + Math.floor(Math.random() * 6);
-    for (let t = 0; t < treesInCluster; t++) {
-      const x = clusterX + (Math.random() - 0.5) * 15;
-      const z = clusterZ + (Math.random() - 0.5) * 15;
-      const scale = 0.5 + Math.random() * 0.5;
+    const biome = sampleBiome(x, z);
+
+    // Trees in forest zones - higher spawn rate
+    if (biome.forestDensity > 0.15 && Math.random() < biome.forestDensity * 0.85) {
+      const scale = 0.45 + Math.random() * 0.55;
       const rotY = Math.random() * Math.PI * 2;
-      if (Math.random() > 0.4) {
+
+      // Pine vs deciduous based on biome
+      if (Math.random() < biome.pineRatio) {
         pinePositions.push({ x, z, scale, rotY });
       } else {
         treePositions.push({ x, z, scale, rotY });
@@ -1168,24 +1276,80 @@ export function createReachScene(
     }
   }
 
-  // Collect bush positions
-  for (let i = 0; i < 200; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 15 + Math.random() * 180;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-    if (isValidPosition(x, z, 1.5)) {
-      bushPositions.push({ x, z, scale: 0.5 + Math.random() * 0.9, rotY: Math.random() * Math.PI * 2 });
+  // Scattered lone trees in open grassland (sparse)
+  for (let i = 0; i < 40; i++) {
+    const x = (Math.random() - 0.5) * groundSize * 0.9;
+    const z = (Math.random() - 0.5) * groundSize * 0.9;
+    const biome = sampleBiome(x, z);
+
+    if (biome.forestDensity < 0.1 && isValidPosition(x, z, 2.5)) {
+      const scale = 0.7 + Math.random() * 0.5;
+      const rotY = Math.random() * Math.PI * 2;
+      treePositions.push({ x, z, scale, rotY });
     }
   }
 
-  // Collect rock positions
-  for (let i = 0; i < 100; i++) {
+  // Bushes at forest edges
+  for (let i = 0; i < 120; i++) {
+    const x = (Math.random() - 0.5) * groundSize * 0.95;
+    const z = (Math.random() - 0.5) * groundSize * 0.95;
+    const biome = sampleBiome(x, z);
+
+    // Forest edges: where density transitions
+    if (biome.forestDensity > 0.1 && biome.forestDensity < 0.5 && isValidPosition(x, z, 1.8)) {
+      bushPositions.push({
+        x, z,
+        scale: 0.4 + Math.random() * 0.7,
+        rotY: Math.random() * Math.PI * 2
+      });
+    }
+  }
+
+  // Some bushes in open areas too
+  for (let i = 0; i < 60; i++) {
+    const x = (Math.random() - 0.5) * groundSize * 0.9;
+    const z = (Math.random() - 0.5) * groundSize * 0.9;
+    const biome = sampleBiome(x, z);
+
+    if (biome.forestDensity < 0.2 && isValidPosition(x, z, 1.5)) {
+      bushPositions.push({
+        x, z,
+        scale: 0.5 + Math.random() * 0.8,
+        rotY: Math.random() * Math.PI * 2
+      });
+    }
+  }
+
+  // --- RIVERBANK ROCKS ---
+  // Place rocks along the riverbank
+  for (let i = 0; i < 150; i++) {
+    // Sample along river path
+    const pathIdx = Math.floor(Math.random() * riverPath.length);
+    const riverPoint = riverPath[pathIdx];
+
+    // Random offset perpendicular to river
+    const perpAngle = Math.random() * Math.PI * 2;
+    const dist = riverConfig.width * 0.9 + Math.random() * riverConfig.width * 1.5;
+    const x = riverPoint.x + Math.cos(perpAngle) * dist;
+    const z = riverPoint.z + Math.sin(perpAngle) * dist;
+
+    const actualDist = distanceToRiver(x, z, riverPath);
+    if (actualDist > riverConfig.width * 0.8 && actualDist < riverConfig.width * 2.5) {
+      riverbankRockPositions.push({
+        x, z,
+        scale: 0.3 + Math.random() * 0.7,
+        rotY: Math.random() * Math.PI * 2
+      });
+    }
+  }
+
+  // Regular rocks scattered elsewhere
+  for (let i = 0; i < 60; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = 20 + Math.random() * 175;
+    const radius = 30 + Math.random() * 165;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
-    if (isValidPosition(x, z, 1)) {
+    if (isValidPosition(x, z, 2)) {
       rockPositions.push({ x, z, scale: 0.4 + Math.random() * 1.2, rotY: Math.random() * Math.PI * 2 });
     }
   }
@@ -1288,13 +1452,14 @@ export function createReachScene(
   bushTemplate.receiveShadows = true;
   shadowGenerator.addShadowCaster(bushTemplate);
 
-  // Rocks (partially embedded in ground)
-  const rockMatrices = new Float32Array(rockPositions.length * 16);
-  rockPositions.forEach((pos, i) => {
+  // Rocks (partially embedded in ground) - combine regular + riverbank rocks
+  const allRockPositions = [...rockPositions, ...riverbankRockPositions];
+  const rockMatrices = new Float32Array(allRockPositions.length * 16);
+  allRockPositions.forEach((pos, i) => {
     const terrainY = getTerrainHeight(pos.x, pos.z);
-    const rockY = terrainY + pos.scale * 0.4; // Rock center offset (partially buried)
+    const rockY = terrainY + pos.scale * 0.35; // Rock center offset (partially buried)
     Matrix.ComposeToRef(
-      new Vector3(pos.scale, pos.scale * 0.8, pos.scale),
+      new Vector3(pos.scale, pos.scale * 0.7, pos.scale),
       Quaternion.RotationAxis(Vector3.Up(), pos.rotY),
       new Vector3(pos.x, rockY, pos.z),
       tempMatrix
@@ -1307,8 +1472,9 @@ export function createReachScene(
   shadowGenerator.addShadowCaster(rockTemplate);
 
   // Log performance info
-  console.log(`[Performance] Vegetation instances: ${treePositions.length} trees, ${pinePositions.length} pines, ${bushPositions.length} bushes, ${rockPositions.length} rocks`);
-  console.log(`[Performance] Draw calls reduced from ~${(treePositions.length * 7) + (pinePositions.length * 4) + (bushPositions.length * 4) + rockPositions.length} to ~6`);
+  const totalRocks = rockPositions.length + riverbankRockPositions.length;
+  console.log(`[Performance] Vegetation instances: ${treePositions.length} trees, ${pinePositions.length} pines, ${bushPositions.length} bushes, ${totalRocks} rocks (${riverbankRockPositions.length} riverbank)`);
+  console.log(`[Performance] Draw calls reduced from ~${(treePositions.length * 7) + (pinePositions.length * 4) + (bushPositions.length * 4) + totalRocks} to ~6`);
 
   // ===========================================
   // RIVER
