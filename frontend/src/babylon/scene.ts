@@ -27,6 +27,7 @@ import {
   SSAO2RenderingPipeline,
   PostProcess,
   Effect,
+  VolumetricLightScatteringPostProcess,
 } from '@babylonjs/core';
 // GrassProceduralTexture removed - using custom noise-based texture instead
 import '@babylonjs/loaders/glTF';
@@ -79,9 +80,12 @@ export function createReachScene(
   camera.inertia = 0.7;
   camera.attachControl(engine.getRenderingCanvas(), true);
 
-  // WASD Panning - using window events for reliable keyboard capture
-  const panSpeed = 1.0;
+  // WASD Panning - smooth velocity-based movement
+  const maxPanSpeed = 1.2;        // Maximum movement speed
+  const acceleration = 0.08;      // How quickly we reach max speed
+  const deceleration = 0.12;      // How quickly we slow down (slightly faster than accel for responsiveness)
   const keysPressed: { [key: string]: boolean } = {};
+  let velocity = Vector3.Zero();  // Current movement velocity
 
   const handleKeyDown = (e: KeyboardEvent) => {
     const key = e.key.toLowerCase();
@@ -122,14 +126,29 @@ export function createReachScene(
     // Right is perpendicular to forward (cross with up)
     const right = Vector3.Cross(Vector3.Up(), forward).normalize();
 
-    let movement = Vector3.Zero();
-    if (keysPressed['w']) movement.addInPlace(forward.scale(panSpeed));
-    if (keysPressed['s']) movement.addInPlace(forward.scale(-panSpeed));
-    if (keysPressed['a']) movement.addInPlace(right.scale(-panSpeed));
-    if (keysPressed['d']) movement.addInPlace(right.scale(panSpeed));
+    // Calculate target velocity based on input
+    let targetVelocity = Vector3.Zero();
+    if (keysPressed['w']) targetVelocity.addInPlace(forward.scale(maxPanSpeed));
+    if (keysPressed['s']) targetVelocity.addInPlace(forward.scale(-maxPanSpeed));
+    if (keysPressed['a']) targetVelocity.addInPlace(right.scale(-maxPanSpeed));
+    if (keysPressed['d']) targetVelocity.addInPlace(right.scale(maxPanSpeed));
 
-    if (movement.length() > 0) {
-      camera.target.addInPlace(movement);
+    // Normalize diagonal movement to prevent faster diagonal speed
+    if (targetVelocity.length() > maxPanSpeed) {
+      targetVelocity.normalize().scaleInPlace(maxPanSpeed);
+    }
+
+    // Smoothly interpolate current velocity toward target velocity
+    const isMoving = targetVelocity.length() > 0;
+    const lerpFactor = isMoving ? acceleration : deceleration;
+
+    velocity = Vector3.Lerp(velocity, targetVelocity, lerpFactor);
+
+    // Apply velocity to camera (with small threshold to prevent micro-movements)
+    if (velocity.length() > 0.001) {
+      camera.target.addInPlace(velocity);
+    } else {
+      velocity = Vector3.Zero(); // Stop completely when very slow
     }
   });
 
@@ -172,6 +191,9 @@ export function createReachScene(
   ssao.maxZ = 250; // Max depth
   ssao.minZAspect = 0.5;
 
+  // SSR disabled - too expensive for web, causes noise and low FPS
+  // Can be re-enabled for high-end GPUs if needed
+
   // ===========================================
   // POST-PROCESSING (Cinematic look)
   // ===========================================
@@ -213,6 +235,19 @@ export function createReachScene(
   curves.highlightsSaturation = -10; // Desaturate highlights slightly
   curves.shadowsHue = 20; // Warm shadows
   curves.shadowsSaturation = 10;
+
+  // Depth of Field - disabled for performance (causes blur)
+  pipeline.depthOfFieldEnabled = false;
+
+  // Chromatic Aberration - disabled (can cause visual artifacts)
+  pipeline.chromaticAberrationEnabled = false;
+
+  // ===========================================
+  // ATMOSPHERIC FOG
+  // ===========================================
+  scene.fogMode = Scene.FOGMODE_EXP2;
+  scene.fogDensity = 0.0006; // Subtle fog
+  scene.fogColor = new Color3(0.78, 0.85, 0.92); // Light bluish atmospheric haze
 
   // ===========================================
   // STYLIZED EDGE DETECTION SHADER
@@ -503,6 +538,31 @@ export function createReachScene(
     }
   };
 
+  // ===========================================
+  // GOD RAYS (Volumetric Light Scattering)
+  // ===========================================
+  // Creates beautiful light shafts streaming from the sun through clouds
+  const godRays = new VolumetricLightScatteringPostProcess(
+    'godRays',
+    1.0, // Ratio
+    camera,
+    sun, // Light source mesh
+    100, // Samples (quality)
+    Texture.BILINEAR_SAMPLINGMODE,
+    engine,
+    false // Use custom mesh (the sun)
+  );
+
+  // God rays settings for subtle, realistic effect
+  godRays.exposure = 0.3; // Intensity of rays
+  godRays.decay = 0.97; // How quickly rays fade
+  godRays.weight = 0.5; // Overall strength
+  godRays.density = 0.9; // Density of the effect
+
+  // Make the sun mesh used for god rays slightly larger for better effect
+  godRays.mesh.scaling = new Vector3(1.5, 1.5, 1.5);
+  godRays.mesh.material = sunMat;
+
   // Clouds - fluffy low-poly style
   const clouds: Mesh[] = [];
   const cloudMat = new StandardMaterial('cloudMat', scene);
@@ -588,85 +648,191 @@ export function createReachScene(
   });
 
   // ===========================================
-  // CLOUD SHADOWS VIA NOISE TEXTURE (proper implementation)
+  // ROLLING CLOUD SHADOWS (Ground Plane Method)
   // ===========================================
-  // Create a large plane high up that casts shadows using animated noise texture
+  // Matches terrain resolution, uses billow noise for realistic cloud shapes
 
-  // Import and create noise texture for clouds
-  const cloudNoiseTexture = new DynamicTexture('cloudNoise', 512, scene);
-  const noiseCtx = cloudNoiseTexture.getContext() as CanvasRenderingContext2D;
+  // Generate a tileable cloud shadow texture once
+  const cloudShadowTexSize = 1024; // Higher res for better detail
+  const cloudShadowTex = new DynamicTexture('cloudShadowTex', cloudShadowTexSize, scene, false);
+  const shadowCtx = cloudShadowTex.getContext() as CanvasRenderingContext2D;
 
-  // Generate cloud noise pattern
-  function generateCloudNoise(offsetX: number, offsetY: number) {
-    const imgData = noiseCtx.createImageData(512, 512);
-    const data = imgData.data;
+  // Hash function for deterministic randomness
+  const cloudHash2 = (ix: number, iy: number): number => {
+    // Better hash for more uniform distribution
+    let n = ix * 374761393 + iy * 668265263;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return (n ^ (n >> 16)) / 4294967296 + 0.5;
+  };
 
-    for (let y = 0; y < 512; y++) {
-      for (let x = 0; x < 512; x++) {
-        const i = (y * 512 + x) * 4;
+  // Worley (cellular) noise - returns distance to nearest cell point
+  const worleyNoise2D = (x: number, y: number): number => {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    let minDist = 1.0;
 
-        // Multi-octave noise for cloud-like pattern
-        const nx = (x + offsetX) * 0.008;
-        const ny = (y + offsetY) * 0.008;
-
-        let noise = 0;
-        noise += Math.sin(nx * 3 + ny * 2) * 0.5 + 0.5;
-        noise += (Math.sin(nx * 7 + ny * 5) * 0.5 + 0.5) * 0.5;
-        noise += (Math.sin(nx * 13 + ny * 11) * 0.5 + 0.5) * 0.25;
-        noise /= 1.75;
-
-        // Threshold to create cloud shapes
-        const threshold = 0.45;
-        const alpha = noise > threshold ? Math.min((noise - threshold) * 3, 1) * 0.4 : 0;
-
-        data[i] = 0;     // R
-        data[i + 1] = 0; // G
-        data[i + 2] = 0; // B
-        data[i + 3] = alpha * 255; // A
+    // Check 3x3 grid of cells
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cellX = ix + dx;
+        const cellY = iy + dy;
+        // Random point position within cell
+        const px = cellX + cloudHash2(cellX, cellY);
+        const py = cellY + cloudHash2(cellY + 100, cellX + 100);
+        // Distance to this cell's point
+        const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
+        minDist = Math.min(minDist, dist);
       }
     }
+    return minDist;
+  };
 
-    noiseCtx.putImageData(imgData, 0, 0);
-    cloudNoiseTexture.update();
+  // Perlin-style smooth noise
+  const perlinNoise2D = (x: number, y: number): number => {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    // Smoothstep interpolation
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const n00 = cloudHash2(ix, iy);
+    const n10 = cloudHash2(ix + 1, iy);
+    const n01 = cloudHash2(ix, iy + 1);
+    const n11 = cloudHash2(ix + 1, iy + 1);
+    return n00 * (1 - sx) * (1 - sy) + n10 * sx * (1 - sy) +
+           n01 * (1 - sx) * sy + n11 * sx * sy;
+  };
+
+  // FBM (Fractal Brownian Motion) for Perlin
+  const perlinFbm = (x: number, y: number, octaves: number): number => {
+    let value = 0, amp = 1, freq = 1, max = 0;
+    for (let i = 0; i < octaves; i++) {
+      value += perlinNoise2D(x * freq, y * freq) * amp;
+      max += amp;
+      amp *= 0.5;
+      freq *= 2;
+    }
+    return value / max;
+  };
+
+  // FBM for Worley (inverted for puffy blobs)
+  const worleyFbm = (x: number, y: number, octaves: number): number => {
+    let value = 0, amp = 1, freq = 1, max = 0;
+    for (let i = 0; i < octaves; i++) {
+      // Invert worley: 1 - distance creates blobs instead of cells
+      value += (1 - worleyNoise2D(x * freq, y * freq)) * amp;
+      max += amp;
+      amp *= 0.5;
+      freq *= 2;
+    }
+    return value / max;
+  };
+
+  // Remap function (key to distinct cloud shapes)
+  const remap = (value: number, inMin: number, inMax: number, outMin: number, outMax: number): number => {
+    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);
+  };
+
+  // Generate tileable cloud texture
+  const cloudImgData = shadowCtx.createImageData(cloudShadowTexSize, cloudShadowTexSize);
+  const cloudPixels = cloudImgData.data;
+
+  for (let cy = 0; cy < cloudShadowTexSize; cy++) {
+    for (let cx = 0; cx < cloudShadowTexSize; cx++) {
+      const ci = (cy * cloudShadowTexSize + cx) * 4;
+
+      // Seamless tiling using torus mapping
+      const tx = cx / cloudShadowTexSize;
+      const ty = cy / cloudShadowTexSize;
+      const angle1 = tx * Math.PI * 2;
+      const angle2 = ty * Math.PI * 2;
+
+      // Map to torus for seamless tiling
+      const scale = 4;
+      const nx = (Math.cos(angle1) + 1) * scale;
+      const ny = (Math.sin(angle1) + 1) * scale;
+      const nz = (Math.cos(angle2) + 1) * scale;
+      const nw = (Math.sin(angle2) + 1) * scale;
+
+      const sampleX = nx + nz * 0.7;
+      const sampleY = ny + nw * 0.7;
+
+      // Perlin-Worley combination (industry standard for clouds)
+      // Perlin provides connectivity, inverted Worley provides puffy billows
+      const perlin = perlinFbm(sampleX, sampleY, 4);
+      const worley = worleyFbm(sampleX * 0.8, sampleY * 0.8, 3);
+
+      // Combine: use perlin as base, worley adds billowy character
+      // The remap erodes the perlin using worley for puffy edges
+      const perlinWorley = remap(perlin, worley * 0.4, 1.0, 0.0, 1.0);
+      const cloudBase = Math.max(0, Math.min(1, perlinWorley));
+
+      // Coverage threshold - controls how much of sky has clouds
+      const coverage = 0.45;
+      let cloudDensity = remap(cloudBase, coverage, 1.0, 0.0, 1.0);
+      cloudDensity = Math.max(0, Math.min(1, cloudDensity));
+
+      // Smooth the edges
+      cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity);
+
+      // Final shadow intensity
+      const shadowStrength = cloudDensity * 0.4;
+
+      // Dark texture with alpha for shadow overlay
+      cloudPixels[ci] = 0;
+      cloudPixels[ci + 1] = 0;
+      cloudPixels[ci + 2] = 5;
+      cloudPixels[ci + 3] = shadowStrength * 255;
+    }
+  }
+  shadowCtx.putImageData(cloudImgData, 0, 0);
+  cloudShadowTex.update();
+
+  // Create shadow plane matching terrain exactly
+  const cloudShadowPlane = MeshBuilder.CreateGround('cloudShadowPlane', {
+    width: groundSize,        // Match terrain size (400)
+    height: groundSize,
+    subdivisions: subdivisions, // Match terrain subdivisions (300)
+    updatable: true
+  }, scene);
+
+  // Conform shadow plane to terrain height
+  const shadowPositions = cloudShadowPlane.getVerticesData('position');
+  if (shadowPositions) {
+    for (let si = 0; si < shadowPositions.length; si += 3) {
+      const sx = shadowPositions[si];
+      const sz = shadowPositions[si + 2];
+      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 0.15; // Just above terrain
+    }
+    cloudShadowPlane.updateVerticesData('position', shadowPositions);
   }
 
-  // Initial generation
-  let cloudOffsetX = 0;
-  let cloudOffsetY = 0;
-  generateCloudNoise(0, 0);
-  cloudNoiseTexture.hasAlpha = true;
-
-  // Create shadow-casting plane high above the scene
-  const cloudShadowPlane = MeshBuilder.CreatePlane('cloudShadowPlane', {
-    size: 600
-  }, scene);
-  cloudShadowPlane.rotation.x = Math.PI / 2;
-  cloudShadowPlane.position.y = 80; // High up, below the light
-  cloudShadowPlane.isVisible = false; // Invisible but casts shadows
-
+  // Material with alpha blending for shadow overlay
   const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
-  cloudShadowMat.opacityTexture = cloudNoiseTexture;
+  cloudShadowMat.diffuseTexture = cloudShadowTex;
+  cloudShadowMat.diffuseTexture.hasAlpha = true;
+  cloudShadowMat.diffuseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+  cloudShadowMat.diffuseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+  (cloudShadowMat.diffuseTexture as Texture).uScale = 0.6; // Large clouds
+  (cloudShadowMat.diffuseTexture as Texture).vScale = 0.6;
+  cloudShadowMat.useAlphaFromDiffuseTexture = true;
   cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
-  cloudShadowMat.backFaceCulling = false;
+  cloudShadowMat.specularColor = new Color3(0, 0, 0);
+  cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
+  cloudShadowMat.disableLighting = true;
+  cloudShadowMat.backFaceCulling = true;
   cloudShadowPlane.material = cloudShadowMat;
 
-  // Enable transparent shadows
-  shadowGenerator.transparencyShadow = true;
-  shadowGenerator.enableSoftTransparentShadow = true;
-  shadowGenerator.addShadowCaster(cloudShadowPlane);
+  // Don't receive shadows or interfere with picking
+  cloudShadowPlane.receiveShadows = false;
+  cloudShadowPlane.isPickable = false;
 
-  // Animate cloud shadows by regenerating noise with offset
-  let lastNoiseUpdate = 0;
+  // Animate UV offset for rolling shadows (very slow drift)
   scene.onBeforeRenderObservable.add(() => {
-    cloudOffsetX += 0.3; // Slow drift speed
-    cloudOffsetY += 0.1;
-
-    // Update noise texture periodically (not every frame for performance)
-    const now = performance.now();
-    if (now - lastNoiseUpdate > 100) { // Update every 100ms
-      generateCloudNoise(cloudOffsetX, cloudOffsetY);
-      lastNoiseUpdate = now;
-    }
+    const time = performance.now() * 0.000002; // Slow majestic drift
+    (cloudShadowMat.diffuseTexture as Texture).uOffset = time;
+    (cloudShadowMat.diffuseTexture as Texture).vOffset = time * 0.3;
   });
 
   // ===========================================
