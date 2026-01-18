@@ -1,17 +1,33 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import select
+from sqlmodel import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from models import Project, ProjectCreate, ProjectRead
+from models import Project, ProjectCreate, ProjectRead, ProjectWithStats, Task
 from database import get_session
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-@router.get("", response_model=list[ProjectRead])
+@router.get("", response_model=list[ProjectWithStats])
 async def list_projects(session: AsyncSession = Depends(get_session)):
-    result = await session.execute(select(Project))
-    return result.scalars().all()
+    result = await session.execute(select(Project).options(selectinload(Project.tasks)))
+    projects = result.scalars().all()
+
+    return [
+        ProjectWithStats(
+            id=p.id,
+            name=p.name,
+            description=p.description,
+            color=p.color,
+            position_x=p.position_x,
+            position_z=p.position_z,
+            created_at=p.created_at,
+            task_count=len(p.tasks),
+            done_count=len([t for t in p.tasks if t.status == 'done'])
+        )
+        for p in projects
+    ]
 
 
 @router.post("", response_model=ProjectRead)

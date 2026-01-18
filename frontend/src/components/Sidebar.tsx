@@ -89,30 +89,56 @@ export function Sidebar() {
         )}
 
         <div className="space-y-1">
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              onClick={() => selectProject(project.id === selectedProjectId ? null : project.id)}
-              className={`w-full text-left p-3 rounded-xl transition-all group ${
-                project.id === selectedProjectId
-                  ? 'bg-[#f0ebe5] shadow-sm'
-                  : 'hover:bg-[#f8f6f4]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-3 h-3 rounded-full ring-2 ring-white shadow-sm transition-transform group-hover:scale-110"
-                  style={{ backgroundColor: project.color }}
-                />
-                <span className="text-[#1a1a1a] font-medium text-sm">{project.name}</span>
-                {project.id === selectedProjectId && (
-                  <svg className="w-4 h-4 text-[#d4a574] ml-auto" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                )}
-              </div>
-            </button>
-          ))}
+          {projects.map((project) => {
+            const progress = project.task_count > 0
+              ? Math.round((project.done_count / project.task_count) * 100)
+              : 0;
+
+            return (
+              <button
+                key={project.id}
+                onClick={() => selectProject(project.id === selectedProjectId ? null : project.id)}
+                className={`w-full text-left p-3 rounded-xl transition-all group ${
+                  project.id === selectedProjectId
+                    ? 'bg-[#f0ebe5] shadow-sm'
+                    : 'hover:bg-[#f8f6f4]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-3 h-3 rounded-full ring-2 ring-white shadow-sm transition-transform group-hover:scale-110"
+                    style={{ backgroundColor: project.color }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#1a1a1a] font-medium text-sm truncate">{project.name}</span>
+                      {project.id === selectedProjectId && (
+                        <svg className="w-4 h-4 text-[#d4a574] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                    {project.task_count > 0 && (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <div className="flex-1 h-1 bg-[#e8e4df] rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{
+                              width: `${progress}%`,
+                              backgroundColor: progress === 100 ? '#7a9e7a' : '#d4a574'
+                            }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-[#8a857f] tabular-nums">
+                          {project.done_count}/{project.task_count}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {projects.length === 0 && !loading && (

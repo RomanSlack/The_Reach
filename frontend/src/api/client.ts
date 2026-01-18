@@ -8,12 +8,15 @@ export interface Project {
   position_x: number;
   position_z: number;
   created_at: string;
+  task_count: number;
+  done_count: number;
 }
 
 export interface Task {
   id: number;
   project_id: number;
   title: string;
+  description: string | null;
   status: string;
   priority: number;
   deadline: string | null;

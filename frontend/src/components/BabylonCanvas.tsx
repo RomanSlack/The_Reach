@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createEngine } from '../babylon/engine';
 import { createReachScene } from '../babylon/scene';
 import type { ReachScene } from '../babylon/scene';
@@ -10,6 +10,9 @@ export function BabylonCanvas() {
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<ReachScene | null>(null);
   const initRef = useRef(false);
+  const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [showOverlay, setShowOverlay] = useState(true);
 
   const {
     projects,
@@ -29,8 +32,12 @@ export function BabylonCanvas() {
     initRef.current = true;
 
     async function init() {
+      // Simulate initial progress for engine creation
+      setProgress(10);
+
       const engine = await createEngine(canvasRef.current!);
       engineRef.current = engine;
+      setProgress(30);
 
       const reachScene = createReachScene(
         engine,
@@ -38,10 +45,24 @@ export function BabylonCanvas() {
         (projectId, x, z) => moveProject(projectId, x, z)
       );
       sceneRef.current = reachScene;
+      setProgress(70);
+
+      // Wait for scene to be ready
+      await reachScene.scene.whenReadyAsync();
+      setProgress(90);
 
       engine.runRenderLoop(() => {
         reachScene.scene.render();
       });
+
+      // Small delay to ensure first frame renders
+      await new Promise(resolve => setTimeout(resolve, 200));
+      setProgress(100);
+
+      // First fade out the loading content
+      setTimeout(() => setLoading(false), 400);
+      // Then fade out the white overlay to reveal scene
+      setTimeout(() => setShowOverlay(false), 900);
 
       const handleResize = () => engine.resize();
       window.addEventListener('resize', handleResize);
@@ -110,9 +131,59 @@ export function BabylonCanvas() {
   }, [moveMode.active, moveMode.projectId, projects, confirmMove, cancelMoveMode]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 w-full h-full outline-none"
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full outline-none"
+      />
+
+      {/* White overlay that fades out to reveal scene */}
+      {showOverlay && (
+        <div
+          className={`absolute inset-0 z-50 bg-[#faf9f7] transition-opacity duration-700 ease-out ${
+            !loading ? 'opacity-0' : 'opacity-100'
+          }`}
+        />
+      )}
+
+      {/* Loading Content */}
+      {loading && (
+        <div
+          className={`absolute inset-0 z-50 flex flex-col items-center justify-center transition-opacity duration-300 ${
+            progress === 100 ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <div className="flex flex-col items-center gap-6">
+            {/* Logo */}
+            <img
+              src="/the_reach_logo_v2_transparent_bg.png"
+              alt="The Reach"
+              className="w-24 h-24 object-contain"
+            />
+
+            {/* Title */}
+            <h1
+              className="text-3xl font-semibold text-[#1a1a1a] tracking-tight"
+              style={{ fontFamily: "'Playfair Display', serif" }}
+            >
+              The Reach
+            </h1>
+
+            {/* Progress Bar */}
+            <div className="w-48 h-1.5 bg-[#e8e4df] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-[#d4a574] to-[#c9976a] rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+
+            {/* Loading Text */}
+            <p className="text-sm text-[#8a857f]">
+              {progress < 30 ? 'Initializing...' : progress < 70 ? 'Creating world...' : progress < 100 ? 'Almost ready...' : 'Ready!'}
+            </p>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

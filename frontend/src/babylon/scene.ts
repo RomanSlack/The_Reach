@@ -88,6 +88,17 @@ export function createReachScene(
   let velocity = Vector3.Zero();  // Current movement velocity
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // Ignore keyboard input when focused on form elements
+    const target = e.target as HTMLElement;
+    const isFormElement = target.tagName === 'INPUT' ||
+                          target.tagName === 'TEXTAREA' ||
+                          target.tagName === 'SELECT' ||
+                          target.isContentEditable;
+
+    if (isFormElement && e.key.toLowerCase() !== 'escape') {
+      return;
+    }
+
     const key = e.key.toLowerCase();
     keysPressed[key] = true;
 
@@ -102,6 +113,17 @@ export function createReachScene(
   };
 
   const handleKeyUp = (e: KeyboardEvent) => {
+    // Ignore keyboard input when focused on form elements
+    const target = e.target as HTMLElement;
+    const isFormElement = target.tagName === 'INPUT' ||
+                          target.tagName === 'TEXTAREA' ||
+                          target.tagName === 'SELECT' ||
+                          target.isContentEditable;
+
+    if (isFormElement) {
+      return;
+    }
+
     const key = e.key.toLowerCase();
     keysPressed[key] = false;
   };

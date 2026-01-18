@@ -2,11 +2,14 @@ import { create } from 'zustand';
 import { api } from '../api/client';
 import type { Project, Task } from '../api/client';
 
+export type SortOption = 'priority' | 'deadline' | 'created' | 'alphabetical';
+
 interface ProjectStore {
   projects: Project[];
   selectedProjectId: number | null;
   tasks: Task[];
   loading: boolean;
+  sortBy: SortOption;
   placementMode: {
     active: boolean;
     name: string;
@@ -26,8 +29,11 @@ interface ProjectStore {
   cancelMoveMode: () => void;
   confirmMove: (x: number, z: number) => Promise<void>;
   moveProject: (id: number, x: number, z: number) => Promise<void>;
-  addTask: (title: string) => Promise<void>;
+  addTask: (title: string, description?: string | null, priority?: number, deadline?: string | null) => Promise<void>;
   updateTaskStatus: (taskId: number, status: string) => Promise<void>;
+  updateTask: (taskId: number, updates: { title?: string; description?: string | null; priority?: number; deadline?: string | null }) => Promise<void>;
+  deleteTask: (taskId: number) => Promise<void>;
+  setSortBy: (sort: SortOption) => void;
 }
 
 // Warm, muted palette
@@ -41,6 +47,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectedProjectId: null,
   tasks: [],
   loading: false,
+  sortBy: 'priority' as SortOption,
   placementMode: {
     active: false,
     name: '',
@@ -98,8 +105,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       position_z: z,
     });
 
+    // Add stats fields for new project
+    const projectWithStats = { ...project, task_count: 0, done_count: 0 };
+
     set({
-      projects: [...projects, project],
+      projects: [...projects, projectWithStats],
       placementMode: {
         active: false,
         name: '',
@@ -161,23 +171,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
   },
 
-  addTask: async (title) => {
+  addTask: async (title, description = null, priority = 0, deadline = null) => {
     const projectId = get().selectedProjectId;
     if (projectId === null) return;
     const task = await api.createTask(projectId, {
       title,
+      description,
       status: 'todo',
-      priority: 0,
-      deadline: null,
+      priority,
+      deadline,
     });
     set({ tasks: [...get().tasks, task] });
+    // Update project stats
+    set({
+      projects: get().projects.map(p =>
+        p.id === projectId ? { ...p, task_count: p.task_count + 1 } : p
+      ),
+    });
   },
 
   updateTaskStatus: async (taskId, status) => {
     const task = get().tasks.find(t => t.id === taskId);
     if (!task) return;
+    const oldStatus = task.status;
     await api.updateTask(taskId, {
       title: task.title,
+      description: task.description,
       status,
       priority: task.priority,
       deadline: task.deadline,
@@ -185,5 +204,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       tasks: get().tasks.map(t => t.id === taskId ? { ...t, status } : t),
     });
+    // Update project stats if status changed to/from done
+    const projectId = get().selectedProjectId;
+    if (projectId !== null && oldStatus !== status) {
+      const doneChange = (status === 'done' ? 1 : 0) - (oldStatus === 'done' ? 1 : 0);
+      if (doneChange !== 0) {
+        set({
+          projects: get().projects.map(p =>
+            p.id === projectId ? { ...p, done_count: p.done_count + doneChange } : p
+          ),
+        });
+      }
+    }
+  },
+
+  updateTask: async (taskId, updates) => {
+    const task = get().tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const updatedTask = await api.updateTask(taskId, {
+      title: updates.title ?? task.title,
+      description: updates.description !== undefined ? updates.description : task.description,
+      status: task.status,
+      priority: updates.priority ?? task.priority,
+      deadline: updates.deadline !== undefined ? updates.deadline : task.deadline,
+    });
+    set({
+      tasks: get().tasks.map(t => t.id === taskId ? updatedTask : t),
+    });
+  },
+
+  deleteTask: async (taskId) => {
+    const task = get().tasks.find(t => t.id === taskId);
+    const projectId = get().selectedProjectId;
+    await api.deleteTask(taskId);
+    set({
+      tasks: get().tasks.filter(t => t.id !== taskId),
+    });
+    // Update project stats
+    if (projectId !== null && task) {
+      set({
+        projects: get().projects.map(p =>
+          p.id === projectId ? {
+            ...p,
+            task_count: p.task_count - 1,
+            done_count: task.status === 'done' ? p.done_count - 1 : p.done_count
+          } : p
+        ),
+      });
+    }
+  },
+
+  setSortBy: (sort) => {
+    set({ sortBy: sort });
   },
 }));

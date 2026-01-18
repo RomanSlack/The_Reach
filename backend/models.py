@@ -26,8 +26,14 @@ class ProjectRead(ProjectBase):
     created_at: datetime
 
 
+class ProjectWithStats(ProjectRead):
+    task_count: int = 0
+    done_count: int = 0
+
+
 class TaskBase(SQLModel):
     title: str
+    description: Optional[str] = None
     status: str = "todo"  # todo, in_progress, done
     priority: int = 0  # 0=low, 1=medium, 2=high
     deadline: Optional[datetime] = None
