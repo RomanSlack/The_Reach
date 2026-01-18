@@ -903,152 +903,122 @@ export function createReachScene(
   });
 
   // ===========================================
-  // ROLLING CLOUD SHADOWS (Ground Plane Method)
+  // ROLLING CLOUD SHADOWS (Proper Perlin FBM)
   // ===========================================
-  // Matches terrain resolution, uses billow noise for realistic cloud shapes
+  // Uses thresholded fractal Perlin noise for realistic cloud silhouettes
 
-  // Generate a tileable cloud shadow texture once
-  const cloudShadowTexSize = 1024; // Higher res for better detail
+  const cloudShadowTexSize = 1024;
   const cloudShadowTex = new DynamicTexture('cloudShadowTex', cloudShadowTexSize, scene, false);
   const shadowCtx = cloudShadowTex.getContext() as CanvasRenderingContext2D;
 
-  // Hash function for deterministic randomness
-  const cloudHash2 = (ix: number, iy: number): number => {
-    // Better hash for more uniform distribution
-    let n = ix * 374761393 + iy * 668265263;
-    n = (n ^ (n >> 13)) * 1274126177;
-    return (n ^ (n >> 16)) / 4294967296 + 0.5;
-  };
+  // Perlin noise implementation with gradient vectors
+  const CLOUD_SEED = 7;
+  const gradients: { [key: string]: [number, number] } = {};
 
-  // Worley (cellular) noise - returns distance to nearest cell point
-  const worleyNoise2D = (x: number, y: number): number => {
-    const ix = Math.floor(x);
-    const iy = Math.floor(y);
-    let minDist = 1.0;
-
-    // Check 3x3 grid of cells
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const cellX = ix + dx;
-        const cellY = iy + dy;
-        // Random point position within cell
-        const px = cellX + cloudHash2(cellX, cellY);
-        const py = cellY + cloudHash2(cellY + 100, cellX + 100);
-        // Distance to this cell's point
-        const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
-        minDist = Math.min(minDist, dist);
-      }
+  const getGradient = (ix: number, iy: number): [number, number] => {
+    const key = `${ix},${iy}`;
+    if (!gradients[key]) {
+      // Deterministic random angle based on coordinates
+      const hash = Math.sin(ix * 12.9898 + iy * 78.233 + CLOUD_SEED) * 43758.5453;
+      const angle = (hash - Math.floor(hash)) * Math.PI * 2;
+      gradients[key] = [Math.cos(angle), Math.sin(angle)];
     }
-    return minDist;
+    return gradients[key];
   };
 
-  // Perlin-style smooth noise
-  const perlinNoise2D = (x: number, y: number): number => {
-    const ix = Math.floor(x);
-    const iy = Math.floor(y);
-    const fx = x - ix;
-    const fy = y - iy;
-    // Smoothstep interpolation
-    const sx = fx * fx * (3 - 2 * fx);
-    const sy = fy * fy * (3 - 2 * fy);
-    const n00 = cloudHash2(ix, iy);
-    const n10 = cloudHash2(ix + 1, iy);
-    const n01 = cloudHash2(ix, iy + 1);
-    const n11 = cloudHash2(ix + 1, iy + 1);
-    return n00 * (1 - sx) * (1 - sy) + n10 * sx * (1 - sy) +
-           n01 * (1 - sx) * sy + n11 * sx * sy;
+  // Perlin fade curve: 6t^5 - 15t^4 + 10t^3
+  const fade = (t: number): number => t * t * t * (t * (t * 6 - 15) + 10);
+
+  // Linear interpolation
+  const lerp = (a: number, b: number, t: number): number => a + t * (b - a);
+
+  // 2D Perlin noise
+  const perlin2D = (x: number, y: number): number => {
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+
+    const sx = x - x0;
+    const sy = y - y0;
+
+    const [g00x, g00y] = getGradient(x0, y0);
+    const [g10x, g10y] = getGradient(x1, y0);
+    const [g01x, g01y] = getGradient(x0, y1);
+    const [g11x, g11y] = getGradient(x1, y1);
+
+    const n00 = g00x * sx + g00y * sy;
+    const n10 = g10x * (sx - 1) + g10y * sy;
+    const n01 = g01x * sx + g01y * (sy - 1);
+    const n11 = g11x * (sx - 1) + g11y * (sy - 1);
+
+    const u = fade(sx);
+    const v = fade(sy);
+
+    return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
   };
 
-  // FBM (Fractal Brownian Motion) for Perlin
-  const perlinFbm = (x: number, y: number, octaves: number): number => {
-    let value = 0, amp = 1, freq = 1, max = 0;
+  // Fractal Brownian Motion
+  const fbm = (x: number, y: number, octaves: number, lacunarity: number, gain: number): number => {
+    let total = 0;
+    let amp = 1;
+    let ampSum = 0;
+
     for (let i = 0; i < octaves; i++) {
-      value += perlinNoise2D(x * freq, y * freq) * amp;
-      max += amp;
-      amp *= 0.5;
-      freq *= 2;
+      total += perlin2D(x, y) * amp;
+      ampSum += amp;
+      amp *= gain;
+      x *= lacunarity;
+      y *= lacunarity;
     }
-    return value / max;
+
+    // Normalize to [0, 1]
+    return (total / ampSum + 0.7) * 0.7; // Perlin ranges roughly -0.7 to 0.7
   };
 
-  // FBM for Worley (inverted for puffy blobs)
-  const worleyFbm = (x: number, y: number, octaves: number): number => {
-    let value = 0, amp = 1, freq = 1, max = 0;
-    for (let i = 0; i < octaves; i++) {
-      // Invert worley: 1 - distance creates blobs instead of cells
-      value += (1 - worleyNoise2D(x * freq, y * freq)) * amp;
-      max += amp;
-      amp *= 0.5;
-      freq *= 2;
-    }
-    return value / max;
-  };
-
-  // Remap function (key to distinct cloud shapes)
-  const remap = (value: number, inMin: number, inMax: number, outMin: number, outMax: number): number => {
-    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);
-  };
-
-  // Generate tileable cloud texture
+  // Generate cloud texture with FBM Perlin noise
   const cloudImgData = shadowCtx.createImageData(cloudShadowTexSize, cloudShadowTexSize);
   const cloudPixels = cloudImgData.data;
+
+  // Parameters matching the Python script
+  const baseScale = 220.0; // Larger = bigger cloud masses
+  const octaves = 5;
+  const lacunarity = 2.0;
+  const gain = 0.5;
+  const threshold = 0.55; // Higher = fewer clouds
 
   for (let cy = 0; cy < cloudShadowTexSize; cy++) {
     for (let cx = 0; cx < cloudShadowTexSize; cx++) {
       const ci = (cy * cloudShadowTexSize + cx) * 4;
 
-      // Seamless tiling using torus mapping
-      const tx = cx / cloudShadowTexSize;
-      const ty = cy / cloudShadowTexSize;
-      const angle1 = tx * Math.PI * 2;
-      const angle2 = ty * Math.PI * 2;
+      // Sample position in noise space
+      const nx = cx / baseScale;
+      const ny = cy / baseScale;
 
-      // Map to torus for seamless tiling
-      const scale = 4;
-      const nx = (Math.cos(angle1) + 1) * scale;
-      const ny = (Math.sin(angle1) + 1) * scale;
-      const nz = (Math.cos(angle2) + 1) * scale;
-      const nw = (Math.sin(angle2) + 1) * scale;
+      // Get FBM noise value
+      let noise = fbm(nx, ny, octaves, lacunarity, gain);
+      noise = Math.max(0, Math.min(1, noise));
 
-      const sampleX = nx + nz * 0.7;
-      const sampleY = ny + nw * 0.7;
+      // Binary threshold for cloud shapes
+      const isCloud = noise > threshold;
 
-      // Perlin-Worley combination (industry standard for clouds)
-      // Perlin provides connectivity, inverted Worley provides puffy billows
-      const perlin = perlinFbm(sampleX, sampleY, 4);
-      const worley = worleyFbm(sampleX * 0.8, sampleY * 0.8, 3);
+      // White where clouds are (will be shadow), black elsewhere
+      const shadowValue = isCloud ? 100 : 0; // 100 = ~40% opacity shadow
 
-      // Combine: use perlin as base, worley adds billowy character
-      // The remap erodes the perlin using worley for puffy edges
-      const perlinWorley = remap(perlin, worley * 0.4, 1.0, 0.0, 1.0);
-      const cloudBase = Math.max(0, Math.min(1, perlinWorley));
-
-      // Coverage threshold - controls how much of sky has clouds
-      const coverage = 0.45;
-      let cloudDensity = remap(cloudBase, coverage, 1.0, 0.0, 1.0);
-      cloudDensity = Math.max(0, Math.min(1, cloudDensity));
-
-      // Smooth the edges
-      cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity);
-
-      // Final shadow intensity
-      const shadowStrength = cloudDensity * 0.4;
-
-      // Dark texture with alpha for shadow overlay
-      cloudPixels[ci] = 0;
-      cloudPixels[ci + 1] = 0;
-      cloudPixels[ci + 2] = 10;
-      cloudPixels[ci + 3] = Math.floor(shadowStrength * 255);
+      cloudPixels[ci] = shadowValue;
+      cloudPixels[ci + 1] = shadowValue;
+      cloudPixels[ci + 2] = shadowValue;
+      cloudPixels[ci + 3] = 255;
     }
   }
   shadowCtx.putImageData(cloudImgData, 0, 0);
   cloudShadowTex.update();
 
-  // Create shadow plane matching terrain exactly
+  // Create shadow plane matching terrain
   const cloudShadowPlane = MeshBuilder.CreateGround('cloudShadowPlane', {
-    width: groundSize,        // Match terrain size (400)
+    width: groundSize,
     height: groundSize,
-    subdivisions: subdivisions, // Match terrain subdivisions (300)
+    subdivisions: 64, // Lower subdivisions for shadow plane (performance)
     updatable: true
   }, scene);
 
@@ -1058,36 +1028,50 @@ export function createReachScene(
     for (let si = 0; si < shadowPositions.length; si += 3) {
       const sx = shadowPositions[si];
       const sz = shadowPositions[si + 2];
-      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 0.15; // Just above terrain
+      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 0.3;
     }
     cloudShadowPlane.updateVerticesData('position', shadowPositions);
   }
 
-  // Material with alpha blending for shadow overlay
+  // Simple material with opacity from texture
   const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
-  cloudShadowMat.opacityTexture = cloudShadowTex; // Use opacity texture for alpha
-  cloudShadowMat.opacityTexture.wrapU = Texture.WRAP_ADDRESSMODE;
-  cloudShadowMat.opacityTexture.wrapV = Texture.WRAP_ADDRESSMODE;
-  (cloudShadowMat.opacityTexture as Texture).uScale = 0.6; // Large clouds
-  (cloudShadowMat.opacityTexture as Texture).vScale = 0.6;
-  cloudShadowMat.diffuseColor = new Color3(0.02, 0.02, 0.03); // Very dark but not pure black
+  cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
   cloudShadowMat.specularColor = new Color3(0, 0, 0);
   cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
+  cloudShadowMat.opacityTexture = cloudShadowTex;
+  cloudShadowMat.opacityTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+  cloudShadowMat.opacityTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+  // Scale so texture covers the whole ground once
+  (cloudShadowMat.opacityTexture as Texture).uScale = 1.0;
+  (cloudShadowMat.opacityTexture as Texture).vScale = 1.0;
   cloudShadowMat.disableLighting = true;
-  cloudShadowMat.backFaceCulling = true;
-  cloudShadowMat.alpha = 1.0;
+  cloudShadowMat.backFaceCulling = false;
   cloudShadowPlane.material = cloudShadowMat;
-  cloudShadowPlane.visibility = 1.0;
-
-  // Don't receive shadows or interfere with picking
   cloudShadowPlane.receiveShadows = false;
   cloudShadowPlane.isPickable = false;
 
-  // Animate UV offset for rolling shadows (very slow drift)
+  // DEBUG toggle
+  (window as any).toggleCloudShadowDebug = () => {
+    if (cloudShadowMat.opacityTexture) {
+      cloudShadowMat.opacityTexture = null;
+      cloudShadowMat.alpha = 0.5;
+      cloudShadowMat.diffuseColor = new Color3(1, 0, 0);
+      console.log('Cloud shadows: DEBUG ON (red)');
+    } else {
+      cloudShadowMat.opacityTexture = cloudShadowTex;
+      cloudShadowMat.alpha = 1.0;
+      cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
+      console.log('Cloud shadows: DEBUG OFF');
+    }
+  };
+
+  // Animate shadow movement (+X direction like clouds)
   scene.onBeforeRenderObservable.add(() => {
-    const time = performance.now() * 0.000003; // Slow majestic drift
-    (cloudShadowMat.opacityTexture as Texture).uOffset = time;
-    (cloudShadowMat.opacityTexture as Texture).vOffset = time * 0.4;
+    const time = performance.now() * 0.00001;
+    if (cloudShadowMat.opacityTexture) {
+      (cloudShadowMat.opacityTexture as Texture).uOffset = -time;
+      (cloudShadowMat.opacityTexture as Texture).vOffset = -time * 0.15;
+    }
   });
 
   // ===========================================

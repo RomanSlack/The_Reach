@@ -11,7 +11,8 @@ export function BabylonCanvas() {
   const sceneRef = useRef<ReachScene | null>(null);
   const initRef = useRef(false);
   const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState(0);
+  const [targetProgress, setTargetProgress] = useState(0);
+  const [displayProgress, setDisplayProgress] = useState(0);
   const [showOverlay, setShowOverlay] = useState(true);
 
   const {
@@ -27,17 +28,40 @@ export function BabylonCanvas() {
     moveProject,
   } = useProjectStore();
 
+  // Animate progress bar smoothly toward target
+  useEffect(() => {
+    if (displayProgress >= targetProgress) return;
+
+    const interval = setInterval(() => {
+      setDisplayProgress(prev => {
+        // Calculate how much to increment (faster when further from target)
+        const remaining = targetProgress - prev;
+        const increment = Math.max(0.5, remaining * 0.08);
+        const next = prev + increment;
+
+        // Stop just short of target to wait for next real milestone
+        if (next >= targetProgress - 1) {
+          clearInterval(interval);
+          return targetProgress;
+        }
+        return next;
+      });
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [targetProgress, displayProgress]);
+
   useEffect(() => {
     if (!canvasRef.current || initRef.current) return;
     initRef.current = true;
 
     async function init() {
       // Simulate initial progress for engine creation
-      setProgress(10);
+      setTargetProgress(10);
 
       const engine = await createEngine(canvasRef.current!);
       engineRef.current = engine;
-      setProgress(30);
+      setTargetProgress(30);
 
       const reachScene = createReachScene(
         engine,
@@ -45,11 +69,11 @@ export function BabylonCanvas() {
         (projectId, x, z) => moveProject(projectId, x, z)
       );
       sceneRef.current = reachScene;
-      setProgress(70);
+      setTargetProgress(70);
 
       // Wait for scene to be ready
       await reachScene.scene.whenReadyAsync();
-      setProgress(90);
+      setTargetProgress(90);
 
       engine.runRenderLoop(() => {
         reachScene.scene.render();
@@ -57,7 +81,7 @@ export function BabylonCanvas() {
 
       // Small delay to ensure first frame renders
       await new Promise(resolve => setTimeout(resolve, 200));
-      setProgress(100);
+      setTargetProgress(100);
 
       // First fade out the loading content
       setTimeout(() => setLoading(false), 400);
@@ -130,12 +154,26 @@ export function BabylonCanvas() {
     }
   }, [moveMode.active, moveMode.projectId, projects, confirmMove, cancelMoveMode]);
 
+  const toggleShadowDebug = () => {
+    if ((window as any).toggleCloudShadowDebug) {
+      (window as any).toggleCloudShadowDebug();
+    }
+  };
+
   return (
     <>
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full outline-none"
       />
+
+      {/* Debug button */}
+      <button
+        onClick={toggleShadowDebug}
+        className="absolute bottom-4 left-4 z-50 px-3 py-1.5 bg-black/50 text-white text-xs rounded hover:bg-black/70"
+      >
+        Toggle Cloud Shadows
+      </button>
 
       {/* White overlay that fades out to reveal scene */}
       {showOverlay && (
@@ -150,7 +188,7 @@ export function BabylonCanvas() {
       {loading && (
         <div
           className={`absolute inset-0 z-50 flex flex-col items-center justify-center transition-opacity duration-300 ${
-            progress === 100 ? 'opacity-0' : 'opacity-100'
+            displayProgress >= 100 ? 'opacity-0' : 'opacity-100'
           }`}
         >
           <div className="flex flex-col items-center gap-6">
@@ -172,14 +210,14 @@ export function BabylonCanvas() {
             {/* Progress Bar */}
             <div className="w-48 h-1.5 bg-[#e8e4df] rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-[#d4a574] to-[#c9976a] rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${progress}%` }}
+                className="h-full bg-gradient-to-r from-[#d4a574] to-[#c9976a] rounded-full"
+                style={{ width: `${displayProgress}%` }}
               />
             </div>
 
             {/* Loading Text */}
             <p className="text-sm text-[#8a857f]">
-              {progress < 30 ? 'Initializing...' : progress < 70 ? 'Creating world...' : progress < 100 ? 'Almost ready...' : 'Ready!'}
+              {displayProgress < 30 ? 'Initializing...' : displayProgress < 70 ? 'Creating world...' : displayProgress < 100 ? 'Almost ready...' : 'Ready!'}
             </p>
           </div>
         </div>
