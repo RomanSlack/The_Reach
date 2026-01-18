@@ -911,15 +911,19 @@ export function createReachScene(
   const cloudShadowTex = new DynamicTexture('cloudShadowTex', cloudShadowTexSize, scene, false);
   const shadowCtx = cloudShadowTex.getContext() as CanvasRenderingContext2D;
 
-  // Perlin noise implementation with gradient vectors
+  // Tileable Perlin noise implementation
   const CLOUD_SEED = 7;
+  const GRID_SIZE = 5; // Number of grid cells - noise tiles every GRID_SIZE cells
   const gradients: { [key: string]: [number, number] } = {};
 
   const getGradient = (ix: number, iy: number): [number, number] => {
-    const key = `${ix},${iy}`;
+    // Wrap coordinates for seamless tiling
+    const wx = ((ix % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+    const wy = ((iy % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+    const key = `${wx},${wy}`;
     if (!gradients[key]) {
-      // Deterministic random angle based on coordinates
-      const hash = Math.sin(ix * 12.9898 + iy * 78.233 + CLOUD_SEED) * 43758.5453;
+      // Deterministic random angle based on wrapped coordinates
+      const hash = Math.sin(wx * 12.9898 + wy * 78.233 + CLOUD_SEED) * 43758.5453;
       const angle = (hash - Math.floor(hash)) * Math.PI * 2;
       gradients[key] = [Math.cos(angle), Math.sin(angle)];
     }
@@ -976,23 +980,25 @@ export function createReachScene(
     return (total / ampSum + 0.7) * 0.7; // Perlin ranges roughly -0.7 to 0.7
   };
 
-  // Cloud shadows using Perlin FBM noise
+  // Cloud shadows using tileable Perlin FBM noise
   const cloudImgData = shadowCtx.createImageData(cloudShadowTexSize, cloudShadowTexSize);
   const cloudPixels = cloudImgData.data;
 
-  const baseScale = 220.0;
   const octaves = 5;
   const lacunarity = 2.0;
   const gain = 0.5;
-  const threshold = 0.52;
 
   // First pass: compute noise and find range
+  // Sample exactly GRID_SIZE cells so texture tiles seamlessly
   const noiseValues = new Float32Array(cloudShadowTexSize * cloudShadowTexSize);
   let minN = Infinity, maxN = -Infinity;
   for (let cy = 0; cy < cloudShadowTexSize; cy++) {
     for (let cx = 0; cx < cloudShadowTexSize; cx++) {
       const ni = cy * cloudShadowTexSize + cx;
-      const n = fbm(cx / baseScale, cy / baseScale, octaves, lacunarity, gain);
+      // Map pixel coords to [0, GRID_SIZE) for seamless tiling
+      const nx = (cx / cloudShadowTexSize) * GRID_SIZE;
+      const ny = (cy / cloudShadowTexSize) * GRID_SIZE;
+      const n = fbm(nx, ny, octaves, lacunarity, gain);
       noiseValues[ni] = n;
       if (n < minN) minN = n;
       if (n > maxN) maxN = n;
@@ -1000,22 +1006,22 @@ export function createReachScene(
   }
   const range = maxN - minN || 1;
 
-  // Second pass: generate texture with gradient alpha (like working commit)
+  // Second pass: generate texture with gradient alpha
   for (let cy = 0; cy < cloudShadowTexSize; cy++) {
     for (let cx = 0; cx < cloudShadowTexSize; cx++) {
       const ci = (cy * cloudShadowTexSize + cx) * 4;
       const ni = cy * cloudShadowTexSize + cx;
       const noise = (noiseValues[ni] - minN) / range; // normalized 0-1
 
-      // Apply threshold and smoothing like original
+      // Apply threshold and smoothing
       const coverage = 0.45;
       let cloudDensity = (noise - coverage) / (1.0 - coverage);
       cloudDensity = Math.max(0, Math.min(1, cloudDensity));
       cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity); // smoothstep
 
-      const shadowStrength = cloudDensity * 0.4;
+      const shadowStrength = cloudDensity * 0.48; // 20% darker than before
 
-      // Dark texture with alpha for shadow (from working commit)
+      // Dark texture with alpha for shadow
       cloudPixels[ci] = 0;
       cloudPixels[ci + 1] = 0;
       cloudPixels[ci + 2] = 5;
@@ -1066,12 +1072,12 @@ export function createReachScene(
   cloudShadowPlane.receiveShadows = false;
   cloudShadowPlane.isPickable = false;
 
-  // Animate shadow movement
+  // Animate shadow movement (reversed direction, slower speed)
   scene.onBeforeRenderObservable.add(() => {
-    const time = performance.now() * 0.00002; // Visible movement speed
+    const time = performance.now() * 0.00001; // Half speed
     if (cloudShadowMat.diffuseTexture) {
-      (cloudShadowMat.diffuseTexture as Texture).uOffset = time;
-      (cloudShadowMat.diffuseTexture as Texture).vOffset = time * 0.3;
+      (cloudShadowMat.diffuseTexture as Texture).uOffset = -time; // Reversed
+      (cloudShadowMat.diffuseTexture as Texture).vOffset = -time * 0.3; // Reversed
     }
   });
 
