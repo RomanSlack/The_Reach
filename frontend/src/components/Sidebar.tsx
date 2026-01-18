@@ -23,11 +23,11 @@ export function Sidebar() {
           <img
             src="/the_reach_logo_v2_transparent_bg.png"
             alt="The Reach"
-            className="w-12 h-12 rounded-xl object-cover shadow-sm"
+            className="w-12 h-12 object-contain"
           />
           <div>
             <h1 className="text-xl font-semibold text-[#1a1a1a] tracking-tight" style={{ fontFamily: "'Playfair Display', serif" }}>The Reach</h1>
-            <p className="text-xs text-[#8a857f] font-medium">Project Command</p>
+            <p className="text-xs text-[#8a857f] font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Project Scape</p>
           </div>
         </div>
       </div>
