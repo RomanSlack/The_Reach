@@ -25,47 +25,77 @@ def lerp(a: np.ndarray, b: np.ndarray, t: np.ndarray) -> np.ndarray:
     return a + t * (b - a)
 
 
-def perlin2d(width: int, height: int, scale: float, seed: int) -> np.ndarray:
+def perlin2d(width: int, height: int, scale: float, seed: int, tileable: bool = False) -> np.ndarray:
     """
     2D Perlin noise in [0, 1], roughly.
     scale: higher -> larger features (because we sample fewer grid cells).
+    tileable: if True, the noise will tile seamlessly.
     """
     if scale <= 0:
         raise ValueError("scale must be > 0")
 
     rng = np.random.default_rng(seed)
 
-    # Coordinate grid in "noise space"
-    xs = np.linspace(0, width / scale, width, endpoint=False)
-    ys = np.linspace(0, height / scale, height, endpoint=False)
-    x, y = np.meshgrid(xs, ys)
+    if tileable:
+        # For tileable noise, we need an integer number of cells that wrap
+        grid_w = max(1, int(round(width / scale)))
+        grid_h = max(1, int(round(height / scale)))
 
-    x0 = np.floor(x).astype(int)
-    y0 = np.floor(y).astype(int)
-    x1 = x0 + 1
-    y1 = y0 + 1
+        # Coordinate grid spans exactly grid_w x grid_h cells
+        xs = np.linspace(0, grid_w, width, endpoint=False)
+        ys = np.linspace(0, grid_h, height, endpoint=False)
+        x, y = np.meshgrid(xs, ys)
 
-    # Local coordinates within each cell
-    sx = x - x0
-    sy = y - y0
+        x0 = np.floor(x).astype(int)
+        y0 = np.floor(y).astype(int)
+        x1 = x0 + 1
+        y1 = y0 + 1
 
-    # Create a gradient vector for each integer lattice point needed
-    # We need gradients for x0..x1 and y0..y1.
-    gx_min, gx_max = x0.min(), x1.max()
-    gy_min, gy_max = y0.min(), y1.max()
+        # Local coordinates within each cell
+        sx = x - x0
+        sy = y - y0
 
-    grid_w = gx_max - gx_min + 1
-    grid_h = gy_max - gy_min + 1
+        # Generate gradient grid (will wrap via modulo)
+        angles = rng.uniform(0.0, 2.0 * math.pi, size=(grid_h, grid_w))
+        grads = np.dstack((np.cos(angles), np.sin(angles)))  # (gy, gx, 2)
 
-    angles = rng.uniform(0.0, 2.0 * math.pi, size=(grid_h, grid_w))
-    grads = np.dstack((np.cos(angles), np.sin(angles)))  # (gy, gx, 2)
+        def grad_at(ix: np.ndarray, iy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            # Wrap coordinates for seamless tiling
+            gi = ix % grid_w
+            gj = iy % grid_h
+            g = grads[gj, gi]
+            return g[..., 0], g[..., 1]
+    else:
+        # Coordinate grid in "noise space"
+        xs = np.linspace(0, width / scale, width, endpoint=False)
+        ys = np.linspace(0, height / scale, height, endpoint=False)
+        x, y = np.meshgrid(xs, ys)
 
-    def grad_at(ix: np.ndarray, iy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        # Map absolute lattice coords to gradient grid indices
-        gi = ix - gx_min
-        gj = iy - gy_min
-        g = grads[gj, gi]
-        return g[..., 0], g[..., 1]
+        x0 = np.floor(x).astype(int)
+        y0 = np.floor(y).astype(int)
+        x1 = x0 + 1
+        y1 = y0 + 1
+
+        # Local coordinates within each cell
+        sx = x - x0
+        sy = y - y0
+
+        # Create a gradient vector for each integer lattice point needed
+        gx_min, gx_max = x0.min(), x1.max()
+        gy_min, gy_max = y0.min(), y1.max()
+
+        grid_w = gx_max - gx_min + 1
+        grid_h = gy_max - gy_min + 1
+
+        angles = rng.uniform(0.0, 2.0 * math.pi, size=(grid_h, grid_w))
+        grads = np.dstack((np.cos(angles), np.sin(angles)))  # (gy, gx, 2)
+
+        def grad_at(ix: np.ndarray, iy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            # Map absolute lattice coords to gradient grid indices
+            gi = ix - gx_min
+            gj = iy - gy_min
+            g = grads[gj, gi]
+            return g[..., 0], g[..., 1]
 
     # Fetch gradients at corners
     g00x, g00y = grad_at(x0, y0)
@@ -97,7 +127,7 @@ def perlin2d(width: int, height: int, scale: float, seed: int) -> np.ndarray:
     return nxy.astype(np.float32)
 
 
-def fbm(width: int, height: int, base_scale: float, octaves: int, lacunarity: float, gain: float, seed: int) -> np.ndarray:
+def fbm(width: int, height: int, base_scale: float, octaves: int, lacunarity: float, gain: float, seed: int, tileable: bool = False) -> np.ndarray:
     """
     Fractal Brownian Motion: sum of octaves of Perlin with increasing frequency.
     Returns [0,1].
@@ -108,7 +138,7 @@ def fbm(width: int, height: int, base_scale: float, octaves: int, lacunarity: fl
     scale = base_scale
 
     for i in range(octaves):
-        n = perlin2d(width, height, scale=scale, seed=seed + 1013 * i)
+        n = perlin2d(width, height, scale=scale, seed=seed + 1013 * i, tileable=tileable)
         total += n * amp
         amp_sum += amp
         amp *= gain
@@ -134,6 +164,8 @@ def main() -> None:
     ap.add_argument("--bias-power", type=float, default=1.0, help="Apply pow(noise, bias_power) before threshold. >1 tightens cores.")
     ap.add_argument("--threshold", type=float, default=0.55, help="Higher => fewer white clouds.")
     ap.add_argument("--invert", action="store_true", help="Invert output (clouds black on white).")
+    ap.add_argument("--tileable", action="store_true", help="Make noise seamlessly tileable.")
+    ap.add_argument("--padding", type=int, default=0, help="Padding in pixels where clouds fade to black at edges.")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", type=str, default=default_output)
     args = ap.parse_args()
@@ -146,10 +178,32 @@ def main() -> None:
         lacunarity=args.lacunarity,
         gain=args.gain,
         seed=args.seed,
+        tileable=args.tileable,
     )
 
     if args.bias_power != 1.0:
         n = np.power(np.clip(n, 0.0, 1.0), args.bias_power)
+
+    # Apply edge padding - fade noise to 0 near edges so no clouds get cut off
+    if args.padding > 0:
+        h, w = n.shape
+        # Create falloff masks for each edge
+        x = np.arange(w)
+        y = np.arange(h)
+        # Distance from each edge, normalized to [0,1] over the padding zone
+        left = np.clip(x / args.padding, 0, 1)
+        right = np.clip((w - 1 - x) / args.padding, 0, 1)
+        top = np.clip(y / args.padding, 0, 1)
+        bottom = np.clip((h - 1 - y) / args.padding, 0, 1)
+        # Combine: minimum distance from any edge
+        mask_x = np.minimum(left, right)
+        mask_y = np.minimum(top, bottom)
+        # Smooth falloff using the fade curve
+        mask_x = fade(mask_x)
+        mask_y = fade(mask_y)
+        # 2D mask is product of x and y falloffs
+        mask = np.outer(mask_y, mask_x).astype(np.float32)
+        n = n * mask
 
     # Threshold to binary
     bw = (n > args.threshold).astype(np.uint8) * 255

@@ -11,7 +11,7 @@ export function BabylonCanvas() {
   const sceneRef = useRef<ReachScene | null>(null);
   const initRef = useRef(false);
   const [loading, setLoading] = useState(true);
-  const [targetProgress, setTargetProgress] = useState(0);
+  const [targetProgress, setTargetProgress] = useState(10); // Start with initial target so bar moves immediately
   const [displayProgress, setDisplayProgress] = useState(0);
   const [showOverlay, setShowOverlay] = useState(true);
 
@@ -154,26 +154,12 @@ export function BabylonCanvas() {
     }
   }, [moveMode.active, moveMode.projectId, projects, confirmMove, cancelMoveMode]);
 
-  const toggleShadowDebug = () => {
-    if ((window as any).toggleCloudShadowDebug) {
-      (window as any).toggleCloudShadowDebug();
-    }
-  };
-
   return (
     <>
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full outline-none"
       />
-
-      {/* Debug button */}
-      <button
-        onClick={toggleShadowDebug}
-        className="absolute bottom-4 left-4 z-50 px-3 py-1.5 bg-black/50 text-white text-xs rounded hover:bg-black/70"
-      >
-        Toggle Cloud Shadows
-      </button>
 
       {/* White overlay that fades out to reveal scene */}
       {showOverlay && (

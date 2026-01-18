@@ -976,43 +976,52 @@ export function createReachScene(
     return (total / ampSum + 0.7) * 0.7; // Perlin ranges roughly -0.7 to 0.7
   };
 
-  // Generate cloud texture with FBM Perlin noise
+  // Cloud shadows using Perlin FBM noise
   const cloudImgData = shadowCtx.createImageData(cloudShadowTexSize, cloudShadowTexSize);
   const cloudPixels = cloudImgData.data;
 
-  // Parameters matching the Python script
-  const baseScale = 220.0; // Larger = bigger cloud masses
+  const baseScale = 220.0;
   const octaves = 5;
   const lacunarity = 2.0;
   const gain = 0.5;
-  const threshold = 0.55; // Higher = fewer clouds
+  const threshold = 0.52;
 
+  // First pass: compute noise and find range
+  const noiseValues = new Float32Array(cloudShadowTexSize * cloudShadowTexSize);
+  let minN = Infinity, maxN = -Infinity;
+  for (let cy = 0; cy < cloudShadowTexSize; cy++) {
+    for (let cx = 0; cx < cloudShadowTexSize; cx++) {
+      const ni = cy * cloudShadowTexSize + cx;
+      const n = fbm(cx / baseScale, cy / baseScale, octaves, lacunarity, gain);
+      noiseValues[ni] = n;
+      if (n < minN) minN = n;
+      if (n > maxN) maxN = n;
+    }
+  }
+  const range = maxN - minN || 1;
+
+  // Second pass: generate texture with threshold for cloud shapes
   for (let cy = 0; cy < cloudShadowTexSize; cy++) {
     for (let cx = 0; cx < cloudShadowTexSize; cx++) {
       const ci = (cy * cloudShadowTexSize + cx) * 4;
+      const ni = cy * cloudShadowTexSize + cx;
+      const noise = (noiseValues[ni] - minN) / range; // normalized 0-1
 
-      // Sample position in noise space
-      const nx = cx / baseScale;
-      const ny = cy / baseScale;
-
-      // Get FBM noise value
-      let noise = fbm(nx, ny, octaves, lacunarity, gain);
-      noise = Math.max(0, Math.min(1, noise));
-
-      // Binary threshold for cloud shapes
+      // Threshold to create cloud blobs (like Python script)
       const isCloud = noise > threshold;
 
-      // White where clouds are (will be shadow), black elsewhere
-      const shadowValue = isCloud ? 100 : 0; // 100 = ~40% opacity shadow
-
-      cloudPixels[ci] = shadowValue;
-      cloudPixels[ci + 1] = shadowValue;
-      cloudPixels[ci + 2] = shadowValue;
-      cloudPixels[ci + 3] = 255;
+      // Use gray color for lighter shadows instead of relying on broken alpha
+      const shadowGray = 40; // 0=black, higher=lighter shadow
+      cloudPixels[ci] = shadowGray;
+      cloudPixels[ci + 1] = shadowGray;
+      cloudPixels[ci + 2] = shadowGray;
+      cloudPixels[ci + 3] = isCloud ? 180 : 0;
     }
   }
+  console.log('Noise range:', minN, 'to', maxN);
   shadowCtx.putImageData(cloudImgData, 0, 0);
   cloudShadowTex.update();
+  console.log('Cloud shadow texture created');
 
   // Create shadow plane matching terrain
   const cloudShadowPlane = MeshBuilder.CreateGround('cloudShadowPlane', {
@@ -1033,44 +1042,32 @@ export function createReachScene(
     cloudShadowPlane.updateVerticesData('position', shadowPositions);
   }
 
-  // Simple material with opacity from texture
+  // Material using diffuseTexture with alpha (this approach worked earlier)
   const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
-  cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
+  cloudShadowTex.hasAlpha = true;
+  cloudShadowMat.diffuseTexture = cloudShadowTex;
+  cloudShadowMat.diffuseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+  cloudShadowMat.diffuseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+  (cloudShadowMat.diffuseTexture as Texture).uScale = 1.0;
+  (cloudShadowMat.diffuseTexture as Texture).vScale = 1.0;
+  cloudShadowMat.useAlphaFromDiffuseTexture = true;
+  cloudShadowMat.diffuseColor = new Color3(1, 1, 1); // White to show texture color
   cloudShadowMat.specularColor = new Color3(0, 0, 0);
   cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
-  cloudShadowMat.opacityTexture = cloudShadowTex;
-  cloudShadowMat.opacityTexture.wrapU = Texture.WRAP_ADDRESSMODE;
-  cloudShadowMat.opacityTexture.wrapV = Texture.WRAP_ADDRESSMODE;
-  // Scale so texture covers the whole ground once
-  (cloudShadowMat.opacityTexture as Texture).uScale = 1.0;
-  (cloudShadowMat.opacityTexture as Texture).vScale = 1.0;
   cloudShadowMat.disableLighting = true;
   cloudShadowMat.backFaceCulling = false;
+  cloudShadowMat.transparencyMode = 1; // ALPHABLEND
   cloudShadowPlane.material = cloudShadowMat;
+  cloudShadowPlane.renderingGroupId = 1;
   cloudShadowPlane.receiveShadows = false;
   cloudShadowPlane.isPickable = false;
-
-  // DEBUG toggle
-  (window as any).toggleCloudShadowDebug = () => {
-    if (cloudShadowMat.opacityTexture) {
-      cloudShadowMat.opacityTexture = null;
-      cloudShadowMat.alpha = 0.5;
-      cloudShadowMat.diffuseColor = new Color3(1, 0, 0);
-      console.log('Cloud shadows: DEBUG ON (red)');
-    } else {
-      cloudShadowMat.opacityTexture = cloudShadowTex;
-      cloudShadowMat.alpha = 1.0;
-      cloudShadowMat.diffuseColor = new Color3(0, 0, 0);
-      console.log('Cloud shadows: DEBUG OFF');
-    }
-  };
 
   // Animate shadow movement (+X direction like clouds)
   scene.onBeforeRenderObservable.add(() => {
     const time = performance.now() * 0.00001;
-    if (cloudShadowMat.opacityTexture) {
-      (cloudShadowMat.opacityTexture as Texture).uOffset = -time;
-      (cloudShadowMat.opacityTexture as Texture).vOffset = -time * 0.15;
+    if (cloudShadowMat.diffuseTexture) {
+      (cloudShadowMat.diffuseTexture as Texture).uOffset = -time;
+      (cloudShadowMat.diffuseTexture as Texture).vOffset = -time * 0.15;
     }
   });
 
