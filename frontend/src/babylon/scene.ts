@@ -1000,25 +1000,29 @@ export function createReachScene(
   }
   const range = maxN - minN || 1;
 
-  // Second pass: generate texture with threshold for cloud shapes
+  // Second pass: generate texture with gradient alpha (like working commit)
   for (let cy = 0; cy < cloudShadowTexSize; cy++) {
     for (let cx = 0; cx < cloudShadowTexSize; cx++) {
       const ci = (cy * cloudShadowTexSize + cx) * 4;
       const ni = cy * cloudShadowTexSize + cx;
       const noise = (noiseValues[ni] - minN) / range; // normalized 0-1
 
-      // Threshold to create cloud blobs (like Python script)
-      const isCloud = noise > threshold;
+      // Apply threshold and smoothing like original
+      const coverage = 0.45;
+      let cloudDensity = (noise - coverage) / (1.0 - coverage);
+      cloudDensity = Math.max(0, Math.min(1, cloudDensity));
+      cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity); // smoothstep
 
-      // Use gray color for lighter shadows instead of relying on broken alpha
-      const shadowGray = 40; // 0=black, higher=lighter shadow
-      cloudPixels[ci] = shadowGray;
-      cloudPixels[ci + 1] = shadowGray;
-      cloudPixels[ci + 2] = shadowGray;
-      cloudPixels[ci + 3] = isCloud ? 180 : 0;
+      const shadowStrength = cloudDensity * 0.4;
+
+      // Dark texture with alpha for shadow (from working commit)
+      cloudPixels[ci] = 0;
+      cloudPixels[ci + 1] = 0;
+      cloudPixels[ci + 2] = 5;
+      cloudPixels[ci + 3] = Math.floor(shadowStrength * 255);
     }
   }
-  console.log('Noise range:', minN, 'to', maxN);
+  console.log('Cloud shadow texture generated');
   shadowCtx.putImageData(cloudImgData, 0, 0);
   cloudShadowTex.update();
   console.log('Cloud shadow texture created');
@@ -1037,37 +1041,37 @@ export function createReachScene(
     for (let si = 0; si < shadowPositions.length; si += 3) {
       const sx = shadowPositions[si];
       const sz = shadowPositions[si + 2];
-      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 0.3;
+      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 1.5; // Well above terrain to avoid z-fighting
     }
     cloudShadowPlane.updateVerticesData('position', shadowPositions);
   }
 
-  // Material using diffuseTexture with alpha (this approach worked earlier)
+  // Material setup - simple alpha blended shadow
   const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
   cloudShadowTex.hasAlpha = true;
   cloudShadowMat.diffuseTexture = cloudShadowTex;
   cloudShadowMat.diffuseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
   cloudShadowMat.diffuseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
-  (cloudShadowMat.diffuseTexture as Texture).uScale = 1.0;
-  (cloudShadowMat.diffuseTexture as Texture).vScale = 1.0;
+  (cloudShadowMat.diffuseTexture as Texture).uScale = 0.6;
+  (cloudShadowMat.diffuseTexture as Texture).vScale = 0.6;
   cloudShadowMat.useAlphaFromDiffuseTexture = true;
-  cloudShadowMat.diffuseColor = new Color3(1, 1, 1); // White to show texture color
+  cloudShadowMat.diffuseColor = new Color3(1, 1, 1); // White to show texture as-is
   cloudShadowMat.specularColor = new Color3(0, 0, 0);
   cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
   cloudShadowMat.disableLighting = true;
   cloudShadowMat.backFaceCulling = false;
-  cloudShadowMat.transparencyMode = 1; // ALPHABLEND
+  cloudShadowMat.transparencyMode = 2; // ALPHABLEND
+  cloudShadowMat.alpha = 1;
   cloudShadowPlane.material = cloudShadowMat;
-  cloudShadowPlane.renderingGroupId = 1;
   cloudShadowPlane.receiveShadows = false;
   cloudShadowPlane.isPickable = false;
 
-  // Animate shadow movement (+X direction like clouds)
+  // Animate shadow movement
   scene.onBeforeRenderObservable.add(() => {
-    const time = performance.now() * 0.00001;
+    const time = performance.now() * 0.00002; // Visible movement speed
     if (cloudShadowMat.diffuseTexture) {
-      (cloudShadowMat.diffuseTexture as Texture).uOffset = -time;
-      (cloudShadowMat.diffuseTexture as Texture).vOffset = -time * 0.15;
+      (cloudShadowMat.diffuseTexture as Texture).uOffset = time;
+      (cloudShadowMat.diffuseTexture as Texture).vOffset = time * 0.3;
     }
   });
 
