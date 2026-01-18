@@ -162,7 +162,7 @@ def main() -> None:
     ap.add_argument("--lacunarity", type=float, default=2.0)
     ap.add_argument("--gain", type=float, default=0.5)
     ap.add_argument("--bias-power", type=float, default=1.0, help="Apply pow(noise, bias_power) before threshold. >1 tightens cores.")
-    ap.add_argument("--threshold", type=float, default=0.55, help="Higher => fewer white clouds.")
+    ap.add_argument("--threshold", type=float, default=None, help="Binary threshold (omit for grayscale clouds).")
     ap.add_argument("--invert", action="store_true", help="Invert output (clouds black on white).")
     ap.add_argument("--tileable", action="store_true", help="Make noise seamlessly tileable.")
     ap.add_argument("--padding", type=int, default=0, help="Padding in pixels where clouds fade to black at edges.")
@@ -213,13 +213,16 @@ def main() -> None:
         mask = np.outer(mask_y, mask_x).astype(np.float32)
         n = n * mask
 
-    # Threshold to binary
-    bw = (n > args.threshold).astype(np.uint8) * 255
+    # Either threshold to binary or output grayscale
+    if args.threshold is not None:
+        out = (n > args.threshold).astype(np.uint8) * 255
+    else:
+        out = (n * 255).astype(np.uint8)
 
     if args.invert:
-        bw = 255 - bw
+        out = 255 - out
 
-    img = Image.fromarray(bw, mode="L")
+    img = Image.fromarray(out, mode="L")
 
     # Feather the edges for soft cloud boundaries
     if args.feather > 0:
