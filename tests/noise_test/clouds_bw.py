@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import argparse
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 import os
 
 
@@ -166,6 +166,8 @@ def main() -> None:
     ap.add_argument("--invert", action="store_true", help="Invert output (clouds black on white).")
     ap.add_argument("--tileable", action="store_true", help="Make noise seamlessly tileable.")
     ap.add_argument("--padding", type=int, default=0, help="Padding in pixels where clouds fade to black at edges.")
+    ap.add_argument("--smooth", type=float, default=3, help="Blur noise before threshold for rounder cloud shapes.")
+    ap.add_argument("--feather", type=float, default=5, help="Blur after threshold for soft feathered edges.")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", type=str, default=default_output)
     args = ap.parse_args()
@@ -183,6 +185,12 @@ def main() -> None:
 
     if args.bias_power != 1.0:
         n = np.power(np.clip(n, 0.0, 1.0), args.bias_power)
+
+    # Blur the noise before thresholding for rounder cloud shapes
+    if args.smooth > 0:
+        n_img = Image.fromarray((n * 255).astype(np.uint8), mode="L")
+        n_img = n_img.filter(ImageFilter.GaussianBlur(radius=args.smooth))
+        n = np.array(n_img).astype(np.float32) / 255.0
 
     # Apply edge padding - fade noise to 0 near edges so no clouds get cut off
     if args.padding > 0:
@@ -212,6 +220,11 @@ def main() -> None:
         bw = 255 - bw
 
     img = Image.fromarray(bw, mode="L")
+
+    # Feather the edges for soft cloud boundaries
+    if args.feather > 0:
+        img = img.filter(ImageFilter.GaussianBlur(radius=args.feather))
+
     img.save(args.out)
     print(f"Wrote {args.out}")
 

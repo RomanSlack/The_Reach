@@ -905,179 +905,207 @@ export function createReachScene(
   // ===========================================
   // ROLLING CLOUD SHADOWS (Proper Perlin FBM)
   // ===========================================
-  // Uses thresholded fractal Perlin noise for realistic cloud silhouettes
+  // Congo line cloud shadow system - multiple panels scrolling with edge padding
 
-  const cloudShadowTexSize = 1024;
-  const cloudShadowTex = new DynamicTexture('cloudShadowTex', cloudShadowTexSize, scene, false);
-  const shadowCtx = cloudShadowTex.getContext() as CanvasRenderingContext2D;
+  const cloudTexSize = 512;
+  const cloudPanelSize = groundSize * 1.2; // Slightly larger than terrain
+  const numCloudPanels = 3;
+  const cloudSpeed = 8; // Units per second
+  const cloudDirection = new Vector3(1, 0, 0.3).normalize(); // Scroll direction
 
-  // Tileable Perlin noise implementation
-  const CLOUD_SEED = 7;
-  const GRID_SIZE = 5; // Number of grid cells - noise tiles every GRID_SIZE cells
-  const gradients: { [key: string]: [number, number] } = {};
-
-  const getGradient = (ix: number, iy: number): [number, number] => {
-    // Wrap coordinates for seamless tiling
-    const wx = ((ix % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
-    const wy = ((iy % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
-    const key = `${wx},${wy}`;
-    if (!gradients[key]) {
-      // Deterministic random angle based on wrapped coordinates
-      const hash = Math.sin(wx * 12.9898 + wy * 78.233 + CLOUD_SEED) * 43758.5453;
-      const angle = (hash - Math.floor(hash)) * Math.PI * 2;
-      gradients[key] = [Math.cos(angle), Math.sin(angle)];
-    }
-    return gradients[key];
-  };
-
-  // Perlin fade curve: 6t^5 - 15t^4 + 10t^3
+  // Perlin noise helpers
   const fade = (t: number): number => t * t * t * (t * (t * 6 - 15) + 10);
-
-  // Linear interpolation
   const lerp = (a: number, b: number, t: number): number => a + t * (b - a);
 
-  // 2D Perlin noise
-  const perlin2D = (x: number, y: number): number => {
-    const x0 = Math.floor(x);
-    const y0 = Math.floor(y);
-    const x1 = x0 + 1;
-    const y1 = y0 + 1;
+  const generateCloudTexture = (seed: number): DynamicTexture => {
+    const tex = new DynamicTexture(`cloudTex_${seed}`, cloudTexSize, scene, false);
+    const ctx = tex.getContext() as CanvasRenderingContext2D;
+    const imgData = ctx.createImageData(cloudTexSize, cloudTexSize);
+    const pixels = imgData.data;
 
-    const sx = x - x0;
-    const sy = y - y0;
+    // Gradient cache for this texture
+    const gradients: Map<number, [number, number]> = new Map();
+    const getGradient = (ix: number, iy: number): [number, number] => {
+      const key = iy * 10000 + ix;
+      let grad = gradients.get(key);
+      if (!grad) {
+        const hash = Math.sin(ix * 12.9898 + iy * 78.233 + seed) * 43758.5453;
+        const angle = (hash - Math.floor(hash)) * Math.PI * 2;
+        grad = [Math.cos(angle), Math.sin(angle)];
+        gradients.set(key, grad);
+      }
+      return grad;
+    };
 
-    const [g00x, g00y] = getGradient(x0, y0);
-    const [g10x, g10y] = getGradient(x1, y0);
-    const [g01x, g01y] = getGradient(x0, y1);
-    const [g11x, g11y] = getGradient(x1, y1);
+    const perlin2D = (x: number, y: number): number => {
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const x1 = x0 + 1, y1 = y0 + 1;
+      const sx = x - x0, sy = y - y0;
+      const [g00x, g00y] = getGradient(x0, y0);
+      const [g10x, g10y] = getGradient(x1, y0);
+      const [g01x, g01y] = getGradient(x0, y1);
+      const [g11x, g11y] = getGradient(x1, y1);
+      const n00 = g00x * sx + g00y * sy;
+      const n10 = g10x * (sx - 1) + g10y * sy;
+      const n01 = g01x * sx + g01y * (sy - 1);
+      const n11 = g11x * (sx - 1) + g11y * (sy - 1);
+      const u = fade(sx), v = fade(sy);
+      return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
+    };
 
-    const n00 = g00x * sx + g00y * sy;
-    const n10 = g10x * (sx - 1) + g10y * sy;
-    const n01 = g01x * sx + g01y * (sy - 1);
-    const n11 = g11x * (sx - 1) + g11y * (sy - 1);
+    const fbm = (x: number, y: number): number => {
+      let total = 0, amp = 1, ampSum = 0;
+      const octaves = 5, lacunarity = 2.0, gain = 0.5;
+      for (let i = 0; i < octaves; i++) {
+        total += perlin2D(x, y) * amp;
+        ampSum += amp;
+        amp *= gain;
+        x *= lacunarity;
+        y *= lacunarity;
+      }
+      return (total / ampSum + 0.7) * 0.7;
+    };
 
-    const u = fade(sx);
-    const v = fade(sy);
+    // First pass: compute noise and find range
+    const baseScale = 80;
+    const noiseValues = new Float32Array(cloudTexSize * cloudTexSize);
+    let minN = Infinity, maxN = -Infinity;
+    for (let cy = 0; cy < cloudTexSize; cy++) {
+      for (let cx = 0; cx < cloudTexSize; cx++) {
+        const ni = cy * cloudTexSize + cx;
+        const n = fbm(cx / baseScale, cy / baseScale);
+        noiseValues[ni] = n;
+        if (n < minN) minN = n;
+        if (n > maxN) maxN = n;
+      }
+    }
+    const range = maxN - minN || 1;
 
-    return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
+    // Edge padding - fade to transparent at edges (15% padding)
+    const edgePadding = Math.floor(cloudTexSize * 0.15);
+
+    // Second pass: generate texture with edge-faded alpha
+    for (let cy = 0; cy < cloudTexSize; cy++) {
+      for (let cx = 0; cx < cloudTexSize; cx++) {
+        const ci = (cy * cloudTexSize + cx) * 4;
+        const ni = cy * cloudTexSize + cx;
+        const noise = (noiseValues[ni] - minN) / range;
+
+        // Edge falloff mask
+        const left = Math.min(1, cx / edgePadding);
+        const right = Math.min(1, (cloudTexSize - 1 - cx) / edgePadding);
+        const top = Math.min(1, cy / edgePadding);
+        const bottom = Math.min(1, (cloudTexSize - 1 - cy) / edgePadding);
+        const edgeMask = fade(Math.min(left, right)) * fade(Math.min(top, bottom));
+
+        // Cloud density with threshold
+        const coverage = 0.42;
+        let cloudDensity = (noise - coverage) / (1.0 - coverage);
+        cloudDensity = Math.max(0, Math.min(1, cloudDensity));
+        cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity);
+
+        const shadowStrength = cloudDensity * edgeMask * 0.45;
+
+        pixels[ci] = 0;
+        pixels[ci + 1] = 0;
+        pixels[ci + 2] = 5;
+        pixels[ci + 3] = Math.floor(shadowStrength * 255);
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    tex.update();
+    tex.hasAlpha = true;
+    return tex;
   };
 
-  // Fractal Brownian Motion
-  const fbm = (x: number, y: number, octaves: number, lacunarity: number, gain: number): number => {
-    let total = 0;
-    let amp = 1;
-    let ampSum = 0;
+  // Create cloud panel mesh (flat plane at fixed height above terrain)
+  const createCloudPanel = (index: number): { mesh: Mesh; offset: number; rotation: number; texture: DynamicTexture } => {
+    const texture = generateCloudTexture(7 + index * 1337);
 
-    for (let i = 0; i < octaves; i++) {
-      total += perlin2D(x, y) * amp;
-      ampSum += amp;
-      amp *= gain;
-      x *= lacunarity;
-      y *= lacunarity;
-    }
+    const mesh = MeshBuilder.CreateGround(`cloudPanel_${index}`, {
+      width: cloudPanelSize,
+      height: cloudPanelSize,
+      subdivisions: 1
+    }, scene);
 
-    // Normalize to [0, 1]
-    return (total / ampSum + 0.7) * 0.7; // Perlin ranges roughly -0.7 to 0.7
+    mesh.position.y = 2.0; // Fixed height above terrain
+    mesh.isPickable = false;
+    mesh.receiveShadows = false;
+
+    const mat = new StandardMaterial(`cloudPanelMat_${index}`, scene);
+    mat.diffuseTexture = texture;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.diffuseColor = new Color3(1, 1, 1);
+    mat.specularColor = new Color3(0, 0, 0);
+    mat.emissiveColor = new Color3(0, 0, 0);
+    mat.disableLighting = true;
+    mat.backFaceCulling = false;
+    mat.transparencyMode = 2;
+    mat.alpha = 1;
+    mesh.material = mat;
+
+    // Random initial rotation
+    const rotation = Math.random() * Math.PI * 2;
+    mesh.rotation.y = rotation;
+
+    // Stagger panels along scroll direction
+    const offset = (index - 1) * cloudPanelSize * 0.8;
+    mesh.position.x = cloudDirection.x * offset;
+    mesh.position.z = cloudDirection.z * offset;
+
+    return { mesh, offset, rotation, texture };
   };
 
-  // Cloud shadows using tileable Perlin FBM noise
-  const cloudImgData = shadowCtx.createImageData(cloudShadowTexSize, cloudShadowTexSize);
-  const cloudPixels = cloudImgData.data;
+  // Create the congo line of cloud panels
+  const cloudPanels = Array.from({ length: numCloudPanels }, (_, i) => createCloudPanel(i));
+  const spawnDistance = cloudPanelSize * 1.5; // How far ahead to spawn
+  const despawnDistance = -cloudPanelSize * 1.5; // How far behind to despawn
+  let nextSeed = 100;
 
-  const octaves = 5;
-  const lacunarity = 2.0;
-  const gain = 0.5;
-
-  // First pass: compute noise and find range
-  // Sample exactly GRID_SIZE cells so texture tiles seamlessly
-  const noiseValues = new Float32Array(cloudShadowTexSize * cloudShadowTexSize);
-  let minN = Infinity, maxN = -Infinity;
-  for (let cy = 0; cy < cloudShadowTexSize; cy++) {
-    for (let cx = 0; cx < cloudShadowTexSize; cx++) {
-      const ni = cy * cloudShadowTexSize + cx;
-      // Map pixel coords to [0, GRID_SIZE) for seamless tiling
-      const nx = (cx / cloudShadowTexSize) * GRID_SIZE;
-      const ny = (cy / cloudShadowTexSize) * GRID_SIZE;
-      const n = fbm(nx, ny, octaves, lacunarity, gain);
-      noiseValues[ni] = n;
-      if (n < minN) minN = n;
-      if (n > maxN) maxN = n;
-    }
-  }
-  const range = maxN - minN || 1;
-
-  // Second pass: generate texture with gradient alpha
-  for (let cy = 0; cy < cloudShadowTexSize; cy++) {
-    for (let cx = 0; cx < cloudShadowTexSize; cx++) {
-      const ci = (cy * cloudShadowTexSize + cx) * 4;
-      const ni = cy * cloudShadowTexSize + cx;
-      const noise = (noiseValues[ni] - minN) / range; // normalized 0-1
-
-      // Apply threshold and smoothing
-      const coverage = 0.45;
-      let cloudDensity = (noise - coverage) / (1.0 - coverage);
-      cloudDensity = Math.max(0, Math.min(1, cloudDensity));
-      cloudDensity = cloudDensity * cloudDensity * (3 - 2 * cloudDensity); // smoothstep
-
-      const shadowStrength = cloudDensity * 0.48; // 20% darker than before
-
-      // Dark texture with alpha for shadow
-      cloudPixels[ci] = 0;
-      cloudPixels[ci + 1] = 0;
-      cloudPixels[ci + 2] = 5;
-      cloudPixels[ci + 3] = Math.floor(shadowStrength * 255);
-    }
-  }
-  console.log('Cloud shadow texture generated');
-  shadowCtx.putImageData(cloudImgData, 0, 0);
-  cloudShadowTex.update();
-  console.log('Cloud shadow texture created');
-
-  // Create shadow plane matching terrain
-  const cloudShadowPlane = MeshBuilder.CreateGround('cloudShadowPlane', {
-    width: groundSize,
-    height: groundSize,
-    subdivisions: 64, // Lower subdivisions for shadow plane (performance)
-    updatable: true
-  }, scene);
-
-  // Conform shadow plane to terrain height
-  const shadowPositions = cloudShadowPlane.getVerticesData('position');
-  if (shadowPositions) {
-    for (let si = 0; si < shadowPositions.length; si += 3) {
-      const sx = shadowPositions[si];
-      const sz = shadowPositions[si + 2];
-      shadowPositions[si + 1] = getTerrainHeight(sx, sz) + 1.5; // Well above terrain to avoid z-fighting
-    }
-    cloudShadowPlane.updateVerticesData('position', shadowPositions);
-  }
-
-  // Material setup - simple alpha blended shadow
-  const cloudShadowMat = new StandardMaterial('cloudShadowMat', scene);
-  cloudShadowTex.hasAlpha = true;
-  cloudShadowMat.diffuseTexture = cloudShadowTex;
-  cloudShadowMat.diffuseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
-  cloudShadowMat.diffuseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
-  (cloudShadowMat.diffuseTexture as Texture).uScale = 0.6;
-  (cloudShadowMat.diffuseTexture as Texture).vScale = 0.6;
-  cloudShadowMat.useAlphaFromDiffuseTexture = true;
-  cloudShadowMat.diffuseColor = new Color3(1, 1, 1); // White to show texture as-is
-  cloudShadowMat.specularColor = new Color3(0, 0, 0);
-  cloudShadowMat.emissiveColor = new Color3(0, 0, 0);
-  cloudShadowMat.disableLighting = true;
-  cloudShadowMat.backFaceCulling = false;
-  cloudShadowMat.transparencyMode = 2; // ALPHABLEND
-  cloudShadowMat.alpha = 1;
-  cloudShadowPlane.material = cloudShadowMat;
-  cloudShadowPlane.receiveShadows = false;
-  cloudShadowPlane.isPickable = false;
-
-  // Animate shadow movement (reversed direction, slower speed)
+  // Animate cloud panels
+  let lastTime = performance.now();
+  let debugCounter = 0;
   scene.onBeforeRenderObservable.add(() => {
-    const time = performance.now() * 0.00001; // Half speed
-    if (cloudShadowMat.diffuseTexture) {
-      (cloudShadowMat.diffuseTexture as Texture).uOffset = -time; // Reversed
-      (cloudShadowMat.diffuseTexture as Texture).vOffset = -time * 0.3; // Reversed
+    const now = performance.now();
+    const delta = (now - lastTime) / 1000;
+    lastTime = now;
+
+    const moveX = -cloudDirection.x * cloudSpeed * delta;
+    const moveZ = -cloudDirection.z * cloudSpeed * delta;
+
+    // Debug: log position every 200 frames
+    debugCounter++;
+    if (debugCounter % 200 === 0) {
+      console.log('Cloud panel 0 pos:', cloudPanels[0].mesh.position.x.toFixed(1), cloudPanels[0].mesh.position.z.toFixed(1));
+    }
+
+    for (const panel of cloudPanels) {
+      // Move panel
+      panel.mesh.position.x += moveX;
+      panel.mesh.position.z += moveZ;
+      panel.offset -= cloudSpeed * delta;
+
+      // Check if panel has scrolled past despawn point
+      if (panel.offset < despawnDistance) {
+        // Find furthest panel to spawn behind it
+        let maxOffset = -Infinity;
+        for (const p of cloudPanels) {
+          if (p.offset > maxOffset) maxOffset = p.offset;
+        }
+
+        // Respawn at back with new texture and rotation
+        panel.offset = maxOffset + cloudPanelSize * 0.8;
+        panel.mesh.position.x = cloudDirection.x * panel.offset;
+        panel.mesh.position.z = cloudDirection.z * panel.offset;
+        panel.mesh.rotation.y = Math.random() * Math.PI * 2;
+
+        // Generate new texture for variety
+        const newTex = generateCloudTexture(nextSeed++);
+        (panel.mesh.material as StandardMaterial).diffuseTexture?.dispose();
+        (panel.mesh.material as StandardMaterial).diffuseTexture = newTex;
+        panel.texture = newTex;
+      }
     }
   });
 

@@ -5,3 +5,12 @@ Need to add back in cloud shadows
 Need to de-monolith the scene.ts for babylon and for future procedural complexity,
 
 Need to have you be able to type the tasks or connect to ntoes like this where every newline is a task or something then have AI parse ig, or even just regex
+
+
+
+bro apparently this is the hardest thing oat for you to understand all we want to do is like lets say the scne spawns, ok so we take the algorithm with
+  padding and blur from /home/roman/The_Reach/tests/noise_test/clouds_bw.py ok so we render that as the cloud with the material we have and the proper blur or
+  whatever ok then we generate the one to the left of it too, then they both start animation literally moving physically in the direction they are moving then
+  onve the one on the right reaches the thing its right most edge it geenerates a new one or literally rotates the same algorutm and seed like some degree and
+  sticks it onto the congo line, ok then the one now not on the landscape the first one despawns ok, does that make sense?
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
