@@ -906,7 +906,7 @@ export function createReachScene(
   // ===========================================
   // CLOUD SHADOWS (separate module)
   // ===========================================
-  createCloudShadows(scene, groundSize);
+  createCloudShadows(scene, groundSize, subdivisions, getTerrainHeight);
 
   // ===========================================
   // ENVIRONMENT: INSTANCED VEGETATION (High Performance)

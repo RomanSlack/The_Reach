@@ -11,7 +11,6 @@ import {
   StandardMaterial,
   Color3,
   DynamicTexture,
-  Texture,
   Mesh
 } from '@babylonjs/core';
 
@@ -21,8 +20,9 @@ import {
 const CONFIG = {
   TEX_SIZE: 512,           // Texture resolution
   PANEL_SCALE: 0.9,        // Panel size relative to ground
+  SUBDIVISIONS: 32,        // Mesh detail for terrain conforming
   SPEED: 5,                // Units per second
-  HEIGHT: 1.5,             // Height above terrain
+  HEIGHT_OFFSET: 0.8,      // Height above terrain surface
   EDGE_PADDING: 0.2,       // 20% edge fade
   NOISE_SCALE: 60,         // Larger = bigger cloud blobs
   COVERAGE: 0.45,          // Threshold (higher = fewer clouds)
@@ -148,24 +148,58 @@ function createMaterial(scene: Scene, name: string, texture: DynamicTexture): St
 // ============================================
 // MAIN EXPORT
 // ============================================
-export function createCloudShadows(scene: Scene, groundSize: number): void {
+export function createCloudShadows(
+  scene: Scene,
+  groundSize: number,
+  subdivisions: number,
+  getTerrainHeight: (x: number, z: number) => number
+): void {
   const panelSize = groundSize * CONFIG.PANEL_SCALE;
   const rightEdge = groundSize / 2 + panelSize / 2;
 
-  // Create two panels
+  // Helper to conform mesh to terrain
+  const conformToTerrain = (mesh: Mesh, offsetX: number) => {
+    const positions = mesh.getVerticesData('position');
+    if (!positions) return;
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const localX = positions[i];
+      const localZ = positions[i + 2];
+      // World position = local + mesh offset
+      const worldX = localX + offsetX;
+      const worldZ = localZ;
+      positions[i + 1] = getTerrainHeight(worldX, worldZ) + CONFIG.HEIGHT_OFFSET;
+    }
+    mesh.updateVerticesData('position', positions);
+    mesh.refreshBoundingInfo(); // Fix culling after position changes
+  };
+
+  // Create two panels with same subdivisions as landscape
   const panelA = MeshBuilder.CreateGround('cloudPanelA', {
     width: panelSize,
-    height: panelSize
+    height: panelSize,
+    subdivisions: subdivisions,
+    updatable: true
   }, scene);
 
   const panelB = MeshBuilder.CreateGround('cloudPanelB', {
     width: panelSize,
-    height: panelSize
+    height: panelSize,
+    subdivisions: subdivisions,
+    updatable: true
   }, scene);
 
   // Initial positions: B to the left of A
-  panelA.position.set(0, CONFIG.HEIGHT, 0);
-  panelB.position.set(-panelSize * CONFIG.OVERLAP, CONFIG.HEIGHT, 0);
+  panelA.position.set(0, 0, 0);
+  panelB.position.set(-panelSize * CONFIG.OVERLAP, 0, 0);
+
+  // Conform to terrain initially
+  conformToTerrain(panelA, 0);
+  conformToTerrain(panelB, -panelSize * CONFIG.OVERLAP);
+
+  // Prevent frustum culling issues
+  panelA.alwaysSelectAsActiveMesh = true;
+  panelB.alwaysSelectAsActiveMesh = true;
 
   panelA.isPickable = false;
   panelB.isPickable = false;
@@ -194,12 +228,12 @@ export function createCloudShadows(scene: Scene, groundSize: number): void {
 
     // Respawn logic for panel A
     if (panelA.position.x > rightEdge) {
-      respawnPanel(panelA, panelB, panelSize, scene, seedCounter++);
+      respawnPanel(panelA, panelB, panelSize, scene, seedCounter++, getTerrainHeight);
     }
 
     // Respawn logic for panel B
     if (panelB.position.x > rightEdge) {
-      respawnPanel(panelB, panelA, panelSize, scene, seedCounter++);
+      respawnPanel(panelB, panelA, panelSize, scene, seedCounter++, getTerrainHeight);
     }
   });
 
@@ -211,11 +245,27 @@ function respawnPanel(
   otherPanel: Mesh,
   panelSize: number,
   scene: Scene,
-  seed: number
+  seed: number,
+  getTerrainHeight: (x: number, z: number) => number
 ): void {
   // Move to left of the other panel
-  panel.position.x = otherPanel.position.x - panelSize * CONFIG.OVERLAP;
+  const newX = otherPanel.position.x - panelSize * CONFIG.OVERLAP;
+  panel.position.x = newX;
   panel.rotation.y = Math.random() * Math.PI * 2;
+
+  // Reconform to terrain at new position
+  const positions = panel.getVerticesData('position');
+  if (positions) {
+    for (let i = 0; i < positions.length; i += 3) {
+      const localX = positions[i];
+      const localZ = positions[i + 2];
+      const worldX = localX + newX;
+      const worldZ = localZ;
+      positions[i + 1] = getTerrainHeight(worldX, worldZ) + CONFIG.HEIGHT_OFFSET;
+    }
+    panel.updateVerticesData('position', positions);
+    panel.refreshBoundingInfo();
+  }
 
   // Generate new texture
   const newTex = generateCloudTexture(scene, seed);
