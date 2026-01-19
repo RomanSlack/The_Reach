@@ -55,3 +55,11 @@ export {
   SettlementManager,
   createSettlementManager,
 } from './settlementManager';
+
+// Fire effects
+export {
+  FireManager,
+  createCampfireEffect,
+  createTorchEffect,
+  type FireEffect,
+} from './fireEffects';

@@ -742,6 +742,7 @@ export function createReachScene(
   terrainMat.mixTexture = splatTex;
   terrainMat.specularColor = new Color3(0.1, 0.1, 0.1); // Low specular for matte look
   terrainMat.specularPower = 8;
+  terrainMat.maxSimultaneousLights = 8; // Allow more lights for fire effects
 
   // Texture 1 (Red) - Riverbank with pebbles
   terrainMat.diffuseTexture1 = lakeshoreTex;
@@ -1509,6 +1510,7 @@ export function createReachScene(
     lastTime = currentTime;
     lakeSystem.update(deltaTime);
     birdSystem?.update(deltaTime);
+    settlementManager?.update(deltaTime);
   });
 
   // ===========================================

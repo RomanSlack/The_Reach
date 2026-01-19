@@ -31,6 +31,7 @@ import {
 } from './types';
 import { assetCache, initializeAssets, createAssetInstance } from './assetLoader';
 import { generateCampLayout, generatePreviewLayout } from './campGenerator';
+import { FireManager, type FireEffect } from './fireEffects';
 
 // ============================================
 // SETTLEMENT MANAGER CLASS
@@ -42,8 +43,10 @@ export class SettlementManager {
   private shadowGenerator: ShadowGenerator | null;
   private highlightLayer: HighlightLayer | null;
   private glowLayer: GlowLayer | null;
+  private fireManager: FireManager;
 
   private settlements: Map<number, Settlement> = new Map();
+  private settlementFires: Map<number, FireEffect[]> = new Map(); // Fire effects per settlement
   private selectedId: number | null = null;
   private initialized: boolean = false;
 
@@ -59,6 +62,7 @@ export class SettlementManager {
     this.shadowGenerator = shadowGenerator ?? null;
     this.highlightLayer = highlightLayer ?? null;
     this.glowLayer = glowLayer ?? null;
+    this.fireManager = new FireManager(scene);
   }
 
   /**
@@ -157,6 +161,27 @@ export class SettlementManager {
           instance.meshes.forEach(mesh => {
             this.glowLayer!.addIncludedOnlyMesh(mesh as Mesh);
           });
+        }
+
+        // Add fire effects to campfires and torches
+        if (slot.type === CampAssetType.Campfire) {
+          const fire = this.fireManager.addCampfire(
+            instance.root,
+            new Vector3(0, 0, 0) // Fire at asset center
+          );
+          if (!this.settlementFires.has(project.id)) {
+            this.settlementFires.set(project.id, []);
+          }
+          this.settlementFires.get(project.id)!.push(fire);
+        } else if (slot.type === CampAssetType.TorchStand) {
+          const fire = this.fireManager.addTorch(
+            instance.root,
+            new Vector3(0, 0, 0) // Fire at torch top (offset handled in fireEffects)
+          );
+          if (!this.settlementFires.has(project.id)) {
+            this.settlementFires.set(project.id, []);
+          }
+          this.settlementFires.get(project.id)!.push(fire);
         }
 
         placedAssets.push({
@@ -357,6 +382,13 @@ export class SettlementManager {
     const settlement = this.settlements.get(projectId);
     if (!settlement) return;
 
+    // Remove fire effects
+    const fires = this.settlementFires.get(projectId);
+    if (fires) {
+      fires.forEach(fire => this.fireManager.removeFire(fire));
+      this.settlementFires.delete(projectId);
+    }
+
     // Remove from highlight layer
     if (this.highlightLayer) {
       settlement.placedAssets.forEach(asset => {
@@ -523,6 +555,17 @@ export class SettlementManager {
   }
 
   // ==========================================
+  // UPDATE (call each frame for fire animation)
+  // ==========================================
+
+  /**
+   * Update fire effects (call each frame)
+   */
+  update(deltaTime: number): void {
+    this.fireManager.update(deltaTime);
+  }
+
+  // ==========================================
   // CLEANUP
   // ==========================================
 
@@ -534,6 +577,7 @@ export class SettlementManager {
       this.removeSettlement(id);
     });
     this.settlements.clear();
+    this.fireManager.dispose();
     assetCache.dispose();
     this.initialized = false;
   }

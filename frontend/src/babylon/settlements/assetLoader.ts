@@ -129,6 +129,13 @@ class AssetCache {
         definition.baseScale
       );
 
+      // Increase max simultaneous lights on all materials (for fire point lights)
+      meshes.forEach(mesh => {
+        if (mesh.material && 'maxSimultaneousLights' in mesh.material) {
+          (mesh.material as any).maxSimultaneousLights = 8;
+        }
+      });
+
       const meshCount = meshes.filter(m => m instanceof Mesh).length;
       console.log(`[AssetLoader] Loaded ${definition.type}: ${meshes.length} total, ${meshCount} Mesh instances`);
 

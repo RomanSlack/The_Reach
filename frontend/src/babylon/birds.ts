@@ -50,10 +50,10 @@ const MAX_FLIGHT_HEIGHT = 25;
 const BIRD_COUNT = 6;
 
 // Timing ranges (seconds)
-const PERCH_TIME_MIN = 8;
-const PERCH_TIME_MAX = 20;
-const FLOAT_TIME_MIN = 10;
-const FLOAT_TIME_MAX = 25;
+const PERCH_TIME_MIN = 16;
+const PERCH_TIME_MAX = 40;
+const FLOAT_TIME_MIN = 20;
+const FLOAT_TIME_MAX = 50;
 const FLIGHT_SPEED = 12; // Units per second
 
 export async function createBirdSystem(
