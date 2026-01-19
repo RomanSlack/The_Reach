@@ -12,14 +12,32 @@
 [![Zustand](https://img.shields.io/badge/Zustand-443E38?style=flat-square&logo=react&logoColor=white)](https://zustand-demo.pmnd.rs/)
 
 <p align="center">
-  <img src="readme_images/The_reach_1.png" alt="The Reach" width="800"/>
+  <img src="readme_images/The_reach_2_readme.png" alt="The Reach" width="800"/>
 </p>
 
-A project management and AI orchestration platform that represents projects as interactive 3D worlds. Tasks, timelines, and autonomous agents can be observed and controlled from a single strategic view.
+Your projects as living worlds. Each project becomes a procedurally generated settlement that evolves from a humble campsite to a thriving castle as you make progress.
 
 ## Overview
 
-The Reach reimagines project management as an explorable 3D landscape. Each project becomes an island in a procedurally generated world, complete with terrain, vegetation, and a flowing river. The strategic top-down camera lets you survey your entire project ecosystem at a glance.
+The Reach transforms project management into an explorable 3D landscape with a low-poly aesthetic and realistic lighting. Projects are visualized as settlements on procedural terrain - complete with lakes, forests, wildlife, and dynamic day/night cycles.
+
+**Settlements evolve through 5 tiers based on project activity:**
+
+| Tier | Settlement | Triggers |
+|------|------------|----------|
+| 1 | Campsite | New project, tents & campfire |
+| 2 | Outpost | Early progress, wooden huts |
+| 3 | Village | Steady work, full palisade |
+| 4 | Town | Thriving, stone walls & market |
+| 5 | Castle | Excellence, towers & banners |
+
+## Features
+
+- **Procedural Terrain** - FBM noise-based landscapes with lakes, rocks, and vegetation
+- **Living Ecosystem** - Sheep grazing, birds flying, fish swimming, ducks in water
+- **Dynamic Lighting** - Day/night cycle with stars, campfire glow, and smoke particles
+- **Settlement Evolution** - Camps upgrade as you complete tasks and stay active
+- **Ambient Details** - Water ripples, grass particles, fire effects
 
 ## Project Structure
 
@@ -65,14 +83,6 @@ npm run dev
 npm run tauri dev
 ```
 
-## Features
-
-- **3D Project Visualization** - Projects rendered as interactive islands
-- **Procedural Terrain** - Multi-octave Perlin noise with river carving
-- **Strategic Camera** - WASD panning, scroll zoom, top-down view
-- **Task Management** - Create, track, and complete tasks per project
-- **Real-time Updates** - Changes reflected instantly in the 3D world
-
 ## Controls
 
 | Input | Action |
@@ -82,6 +92,37 @@ npm run tauri dev
 | Click island | Select project |
 | Click terrain | Place/move project (in placement mode) |
 | Escape | Cancel placement |
+
+## Why Not?
+
+Project management doesn't need to be a spreadsheet. So we added:
+
+- **Sheep** that graze and scatter grass particles
+- **Birds** circling overhead
+- **Fish** swimming in the lake, **ducks** splashing around
+- **Campfires** with flickering flames and smoke plumes
+- **Stars** that fade in at night
+- **Water ripples** and reflections
+- **PBR materials** with SSAO, bloom, and ACES tone mapping
+- **Day/night cycle** with warm sunsets and glowing windows
+
+None of it is essential. All of it makes you want to keep your projects alive.
+
+## Future
+
+**Agent Visualization** - Watch your Claude Code sessions and other AI coding agents work in real-time. Each agent gets their own character in your settlement:
+
+| Agent      | Character          | Activity          |
+|------------|--------------------|-------------------|
+| Builder    | Hammer & hardhat   | Creating features |
+| Fixer      | Wrench & toolbelt  | Squashing bugs    |
+| Researcher | Glasses & scroll   | Exploring code    |
+
+See agents spawn at your project, walk between buildings, and despawn with celebration particles when tasks complete. Multi-project agents leave visible trails as they travel between settlements.
+
+**GitHub Integration** - Connect repos to automatically track commits, PRs, and issues. Activity flows into your settlement's health score.
+
+**Multiplayer Worlds** - Share a realm with your team. Watch everyone's projects grow together.
 
 ## Documentation
 

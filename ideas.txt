@@ -14,7 +14,7 @@ Be able to shake trees,
 
 Wind in trees and grass somehow
 
-Better tree models
+Better tree models + more tree variations, and better bushes, rocks etc...
 
 
 bro apparently this is the hardest thing oat for you to understand all we want to do is like lets say the scne spawns, ok so we take the algorithm with
