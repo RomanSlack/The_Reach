@@ -167,18 +167,57 @@ export class SettlementManager {
       labelMesh.parent = rootNode;
     }
 
+    // Create invisible selection hitbox (covers the camp area)
+    const hitboxMesh = this.createHitbox(project.id, layout.radius, project.position_x, project.position_z);
+    if (hitboxMesh) {
+      hitboxMesh.parent = rootNode;
+    }
+
     const settlement: Settlement = {
       id: project.id,
       level,
       rootNode,
       placedAssets,
       labelMesh,
+      hitboxMesh,
       centerX: project.position_x,
       centerZ: project.position_z,
     };
 
     this.settlements.set(project.id, settlement);
     return settlement;
+  }
+
+  /**
+   * Create an invisible hitbox for easier selection
+   */
+  private createHitbox(projectId: number, radius: number, x: number, z: number): Mesh {
+    const terrainY = this.terrainSampler.getHeight(x, z);
+
+    // Create a flat disc as the hitbox
+    const hitbox = MeshBuilder.CreateDisc(`hitbox_${projectId}`, {
+      radius: radius,
+      tessellation: 32,
+    }, this.scene);
+
+    // Rotate to lay flat on the ground
+    hitbox.rotation.x = Math.PI / 2;
+    hitbox.position.y = terrainY + 0.5; // Slightly above ground
+
+    // Make it invisible but pickable
+    const hitboxMat = new StandardMaterial(`hitboxMat_${projectId}`, this.scene);
+    hitboxMat.alpha = 0; // Fully invisible
+    hitbox.material = hitboxMat;
+    hitbox.isPickable = true;
+
+    // Add metadata for picking
+    hitbox.metadata = {
+      type: 'settlement',
+      projectId: projectId,
+      isHitbox: true,
+    };
+
+    return hitbox;
   }
 
   /**
@@ -320,6 +359,7 @@ export class SettlementManager {
     });
 
     settlement.labelMesh?.dispose();
+    settlement.hitboxMesh?.dispose();
     settlement.rootNode.dispose();
 
     this.settlements.delete(projectId);
@@ -398,6 +438,11 @@ export class SettlementManager {
 
     if (settlement.labelMesh) {
       settlement.labelMesh.visibility = visibility;
+    }
+
+    // Disable hitbox picking when faded (e.g., during move mode)
+    if (settlement.hitboxMesh) {
+      settlement.hitboxMesh.isPickable = visibility >= 1;
     }
   }
 

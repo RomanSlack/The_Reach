@@ -54,11 +54,14 @@ export interface AssetDefinition {
   isPickable: boolean;
 }
 
+// Global scale multiplier for all camp assets
+export const CAMP_SCALE_MULTIPLIER = 3.0;
+
 export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.Tent]: {
     type: CampAssetType.Tent,
     path: '/models/camp_1/tent_1.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -67,7 +70,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.Campfire]: {
     type: CampAssetType.Campfire,
     path: '/models/camp_1/camp_fire_1_no_fire.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -76,7 +79,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.Crate]: {
     type: CampAssetType.Crate,
     path: '/models/camp_1/crate_1.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -85,7 +88,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.TorchStand]: {
     type: CampAssetType.TorchStand,
     path: '/models/camp_1/tall_torch_1.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -94,7 +97,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.RockSmall]: {
     type: CampAssetType.RockSmall,
     path: '/models/camp_1/rock_1.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -103,7 +106,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.RockLarge]: {
     type: CampAssetType.RockLarge,
     path: '/models/camp_1/rock_2.glb',
-    baseScale: 1.0,
+    baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,
     receivesShadow: true,
@@ -148,6 +151,7 @@ export interface Settlement {
   rootNode: TransformNode;       // Parent node for all meshes
   placedAssets: PlacedAsset[];   // All placed asset instances
   labelMesh: Mesh | null;        // Floating label
+  hitboxMesh: Mesh | null;       // Invisible selection hitbox
   centerX: number;
   centerZ: number;
 }

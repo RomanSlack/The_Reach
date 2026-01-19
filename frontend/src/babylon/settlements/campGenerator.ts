@@ -100,25 +100,26 @@ interface CampConfig {
   rockSpacing: number;
 }
 
+// Scaled up 3x to match CAMP_SCALE_MULTIPLIER
 const DEFAULT_CAMP_CONFIG: CampConfig = {
-  campRadius: 8,
+  campRadius: 24,
 
   campfireRadius: 0,
-  tentMinRadius: 3,
-  tentMaxRadius: 5,
-  crateMinRadius: 2,
-  crateMaxRadius: 4.5,
-  torchRadius: 5.5,
-  rockMinRadius: 1,
-  rockMaxRadius: 6,
+  tentMinRadius: 9,
+  tentMaxRadius: 15,
+  crateMinRadius: 6,
+  crateMaxRadius: 13.5,
+  torchRadius: 16.5,
+  rockMinRadius: 3,
+  rockMaxRadius: 18,
 
-  positionJitter: 0.3,
+  positionJitter: 0.9,
   rotationJitter: Math.PI / 6, // ±30 degrees
   scaleVariation: 0.15,
 
-  tentSpacing: 3.5,
-  crateSpacing: 1.5,
-  rockSpacing: 2,
+  tentSpacing: 10.5,
+  crateSpacing: 4.5,
+  rockSpacing: 6,
 };
 
 // ============================================
