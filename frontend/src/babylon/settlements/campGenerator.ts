@@ -187,18 +187,51 @@ function generateCircularPosition(
 }
 
 /**
- * Check if a position is too close to existing positions
+ * Get minimum spacing between two asset types
+ * Returns 0 if assets can overlap (rocks with rocks, crates with crates)
  */
-function isTooClose(
+function getMinSpacing(typeA: CampAssetType, typeB: CampAssetType): number {
+  // Rocks can cluster together
+  const isRockA = typeA === CampAssetType.RockSmall || typeA === CampAssetType.RockLarge;
+  const isRockB = typeB === CampAssetType.RockSmall || typeB === CampAssetType.RockLarge;
+  if (isRockA && isRockB) return 0;
+
+  // Crates can cluster together
+  if (typeA === CampAssetType.Crate && typeB === CampAssetType.Crate) return 0;
+
+  // Default spacing between different objects
+  const spacingMap: Partial<Record<CampAssetType, number>> = {
+    [CampAssetType.Tent]: 2.0,
+    [CampAssetType.Campfire]: 1.5,
+    [CampAssetType.Crate]: 1.0,
+    [CampAssetType.TorchStand]: 1.2,
+    [CampAssetType.Banner]: 1.5,
+    [CampAssetType.RockSmall]: 0.8,
+    [CampAssetType.RockLarge]: 1.0,
+  };
+
+  // Use the larger of the two spacings
+  const spacingA = spacingMap[typeA] ?? 1.0;
+  const spacingB = spacingMap[typeB] ?? 1.0;
+  return Math.max(spacingA, spacingB);
+}
+
+/**
+ * Check if a position collides with any existing placed objects
+ */
+function hasCollision(
   x: number,
   z: number,
-  existing: Array<{ x: number; z: number }>,
-  minDistance: number
+  type: CampAssetType,
+  existing: Array<{ x: number; z: number; type: CampAssetType }>
 ): boolean {
   for (const pos of existing) {
+    const minDist = getMinSpacing(type, pos.type);
+    if (minDist === 0) continue; // Skip if overlap is allowed
+
     const dx = x - pos.x;
     const dz = z - pos.z;
-    if (dx * dx + dz * dz < minDistance * minDistance) {
+    if (dx * dx + dz * dz < minDist * minDist) {
       return true;
     }
   }
@@ -241,34 +274,41 @@ export function generateCampLayout(
   const tentArcSpan = Math.PI * 0.8; // Tents span ~140 degrees
 
   for (let i = 0; i < counts.tents; i++) {
-    const angleOffset = counts.tents > 1
-      ? (i / (counts.tents - 1) - 0.5) * tentArcSpan
-      : 0;
-    const angle = tentStartAngle + angleOffset;
-    const radius = rng.range(config.tentMinRadius, config.tentMaxRadius);
+    let attempts = 0;
+    let placed = false;
 
-    const pos = generateCircularPosition(rng, angle, radius, config);
+    while (!placed && attempts < 20) {
+      const angleOffset = counts.tents > 1
+        ? (i / (counts.tents - 1) - 0.5) * tentArcSpan
+        : 0;
+      const angle = tentStartAngle + angleOffset + rng.range(-0.2, 0.2) * attempts * 0.1;
+      const radius = rng.range(config.tentMinRadius, config.tentMaxRadius);
 
-    // Tent opening faces +X in model space
-    // To face campfire at (0,0), we need rotation.y to point +X toward (-pos.x, -pos.z)
-    // In Babylon.js left-handed system: rotation.y rotates +X toward -Z (clockwise from above)
-    // Formula: atan2(pos.z, -pos.x) points tent opening toward center
-    const faceAngle = Math.atan2(pos.z, -pos.x) + rng.range(-0.15, 0.15);
+      const pos = generateCircularPosition(rng, angle, radius, config);
 
-    slots.push({
-      type: CampAssetType.Tent,
-      localX: pos.x,
-      localZ: pos.z,
-      rotation: faceAngle,
-      scale: 1 + rng.range(-config.scaleVariation * 0.5, config.scaleVariation * 0.5),
-      required: i < 2, // First 2 tents are required
-      minTasks: i < 2 ? 0 : (i - 1) * 5, // Additional tents unlock progressively
-    });
-    placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Tent });
+      if (!hasCollision(pos.x, pos.z, CampAssetType.Tent, placedPositions)) {
+        // Tent opening faces +X in model space
+        // To face campfire at (0,0), we need rotation.y to point +X toward (-pos.x, -pos.z)
+        const faceAngle = Math.atan2(pos.z, -pos.x) + rng.range(-0.15, 0.15);
+
+        slots.push({
+          type: CampAssetType.Tent,
+          localX: pos.x,
+          localZ: pos.z,
+          rotation: faceAngle,
+          scale: 1 + rng.range(-config.scaleVariation * 0.5, config.scaleVariation * 0.5),
+          required: i < 2,
+          minTasks: i < 2 ? 0 : (i - 1) * 5,
+        });
+        placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Tent });
+        placed = true;
+      }
+      attempts++;
+    }
   }
 
   // ===========================================
-  // 3. CRATES - Near tents, clustered
+  // 3. CRATES - Near tents, clustered (can overlap with each other)
   // ===========================================
   for (let i = 0; i < counts.crates; i++) {
     let attempts = 0;
@@ -279,17 +319,16 @@ export function generateCampLayout(
       const radius = rng.range(config.crateMinRadius, config.crateMaxRadius);
       const pos = generateCircularPosition(rng, angle, radius, config);
 
-      // Check spacing from other crates
-      const cratePositions = placedPositions.filter(p => p.type === CampAssetType.Crate);
-      if (!isTooClose(pos.x, pos.z, cratePositions, config.crateSpacing)) {
+      // Check collision with all objects (crates can overlap with other crates)
+      if (!hasCollision(pos.x, pos.z, CampAssetType.Crate, placedPositions)) {
         slots.push({
           type: CampAssetType.Crate,
           localX: pos.x,
           localZ: pos.z,
           rotation: rng.range(0, Math.PI * 2),
           scale: 1 + rng.range(-config.scaleVariation, config.scaleVariation),
-          required: i < 3, // First 3 crates are required
-          minTasks: i < 3 ? 0 : (i - 2) * 3, // Additional crates unlock progressively
+          required: i < 3,
+          minTasks: i < 3 ? 0 : (i - 2) * 3,
         });
         placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Crate });
         placed = true;
@@ -304,50 +343,69 @@ export function generateCampLayout(
   const torchStartAngle = tentStartAngle + Math.PI; // Opposite side from tents
 
   for (let i = 0; i < counts.torches; i++) {
-    const angleOffset = counts.torches > 1
-      ? (i / (counts.torches - 1) - 0.5) * Math.PI
-      : 0;
-    const angle = torchStartAngle + angleOffset;
+    let attempts = 0;
+    let placed = false;
 
-    const pos = generateCircularPosition(rng, angle, config.torchRadius, config);
+    while (!placed && attempts < 20) {
+      const angleOffset = counts.torches > 1
+        ? (i / (counts.torches - 1) - 0.5) * Math.PI
+        : 0;
+      const angle = torchStartAngle + angleOffset + rng.range(-0.2, 0.2) * attempts * 0.1;
 
-    slots.push({
-      type: CampAssetType.TorchStand,
-      localX: pos.x,
-      localZ: pos.z,
-      rotation: rng.range(0, Math.PI * 2),
-      scale: 1 + rng.range(-config.scaleVariation * 0.3, config.scaleVariation * 0.3),
-      required: i < 2, // First 2 torches are required
-      minTasks: i < 2 ? 0 : (i - 1) * 4, // Additional torches unlock progressively
-    });
-    placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.TorchStand });
+      const pos = generateCircularPosition(rng, angle, config.torchRadius, config);
+
+      if (!hasCollision(pos.x, pos.z, CampAssetType.TorchStand, placedPositions)) {
+        slots.push({
+          type: CampAssetType.TorchStand,
+          localX: pos.x,
+          localZ: pos.z,
+          rotation: rng.range(0, Math.PI * 2),
+          scale: 1 + rng.range(-config.scaleVariation * 0.3, config.scaleVariation * 0.3),
+          required: i < 2,
+          minTasks: i < 2 ? 0 : (i - 1) * 4,
+        });
+        placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.TorchStand });
+        placed = true;
+      }
+      attempts++;
+    }
   }
 
   // ===========================================
   // 5. BANNER - One per camp, facing campfire
   // ===========================================
   {
-    // Place banner at a random angle, in the tent ring area
-    const bannerAngle = rng.range(0, Math.PI * 2);
-    const pos = generateCircularPosition(rng, bannerAngle, config.bannerRadius, config);
+    let attempts = 0;
+    let placed = false;
 
-    // Banner faces +Z in Babylon (from Blender +Y forward)
-    // To face campfire at (0,0), rotate to point toward center
-    const faceAngle = Math.atan2(-pos.x, -pos.z);
+    while (!placed && attempts < 30) {
+      // Place banner at a random angle, in the tent ring area
+      const bannerAngle = rng.range(0, Math.PI * 2);
+      const pos = generateCircularPosition(rng, bannerAngle, config.bannerRadius, config);
 
-    slots.push({
-      type: CampAssetType.Banner,
-      localX: pos.x,
-      localZ: pos.z,
-      rotation: faceAngle,
-      scale: 1, // Same scale as tent (baseScale handles it)
-      required: true, // Always show banner
-    });
-    placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Banner });
+      if (!hasCollision(pos.x, pos.z, CampAssetType.Banner, placedPositions)) {
+        // Banner faces +Z in Babylon (from Blender +Y forward)
+        // To face campfire at (0,0), rotate to point toward center
+        // Add Math.PI to flip direction (was facing away)
+        const faceAngle = Math.atan2(-pos.x, -pos.z) + Math.PI;
+
+        slots.push({
+          type: CampAssetType.Banner,
+          localX: pos.x,
+          localZ: pos.z,
+          rotation: faceAngle,
+          scale: 1,
+          required: true,
+        });
+        placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Banner });
+        placed = true;
+      }
+      attempts++;
+    }
   }
 
   // ===========================================
-  // 6. ROCKS - Scattered decoration
+  // 6. ROCKS - Scattered decoration (can overlap with each other)
   // ===========================================
   const rockTypes = [
     { type: CampAssetType.RockSmall, count: counts.rocksSmall },
@@ -365,18 +423,15 @@ export function generateCampLayout(
         const radius = rng.range(config.rockMinRadius, config.rockMaxRadius);
         const pos = generateCircularPosition(rng, angle, radius, config);
 
-        // Check spacing from other rocks
-        const rockPositions = placedPositions.filter(
-          p => p.type === CampAssetType.RockSmall || p.type === CampAssetType.RockLarge
-        );
-        if (!isTooClose(pos.x, pos.z, rockPositions, config.rockSpacing)) {
+        // Check collision with all objects (rocks can overlap with other rocks)
+        if (!hasCollision(pos.x, pos.z, type, placedPositions)) {
           slots.push({
             type,
             localX: pos.x,
             localZ: pos.z,
             rotation: rng.range(0, Math.PI * 2),
             scale: 1 + rng.range(-config.scaleVariation, config.scaleVariation),
-            required: totalRocksPlaced < 2, // First 2 rocks are required
+            required: totalRocksPlaced < 2,
             minTasks: totalRocksPlaced < 2 ? 0 : (totalRocksPlaced - 1) * 3,
           });
           placedPositions.push({ x: pos.x, z: pos.z, type });

@@ -2101,6 +2101,9 @@ export function createReachScene(
         settlementManager?.setFireIntensityMultiplier(toMultiplier);
       }
     }, 1000 / fps);
+
+    // Toggle tent interior lights (on at night, off during day)
+    settlementManager?.setTentLightsEnabled(enabled);
   }
 
   return {
