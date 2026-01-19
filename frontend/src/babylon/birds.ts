@@ -25,7 +25,8 @@ interface TreePosition {
 
 interface Bird {
   root: TransformNode;
-  meshes: AbstractMesh[]; // All meshes for this bird
+  flyingMeshes: AbstractMesh[]; // Meshes for flying/perched
+  floatingMeshes: AbstractMesh[]; // Meshes for floating on water
   state: BirdState;
   position: Vector3;
   startPosition: Vector3;
@@ -65,46 +66,70 @@ export async function createBirdSystem(
   const waterLevel = getWaterLevel(lakeConfig);
   const allTrees = [...treePositions, ...pinePositions];
   const birds: Bird[] = [];
-  let templateMeshes: AbstractMesh[] = [];
-  let templateRoot: TransformNode | null = null;
+
+  // Template meshes for both states
+  let flyingTemplateMeshes: AbstractMesh[] = [];
+  let floatingTemplateMeshes: AbstractMesh[] = [];
+  let flyingTemplateRoot: TransformNode | null = null;
+  let floatingTemplateRoot: TransformNode | null = null;
 
   // ===========================================
-  // LOAD BIRD MODEL
+  // LOAD BIRD MODELS
   // ===========================================
   try {
-    const result = await SceneLoader.ImportMeshAsync(
+    // Load flying bird model
+    const flyingResult = await SceneLoader.ImportMeshAsync(
       '',
       '/models/animals/',
       'bird_1.glb',
       scene
     );
 
-    // Create a template container and store all meshes
-    templateRoot = new TransformNode('bird_template', scene);
-    templateRoot.setEnabled(false);
+    flyingTemplateRoot = new TransformNode('bird_flying_template', scene);
+    flyingTemplateRoot.setEnabled(false);
 
-    // Parent all meshes to template root and hide them
-    result.meshes.forEach(mesh => {
+    flyingResult.meshes.forEach(mesh => {
       if (mesh.name === '__root__') {
-        mesh.parent = templateRoot;
+        mesh.parent = flyingTemplateRoot;
       }
       mesh.setEnabled(false);
       if (mesh.name !== '__root__') {
-        templateMeshes.push(mesh);
+        flyingTemplateMeshes.push(mesh);
       }
     });
 
-    console.log(`[Birds] Loaded bird model (${templateMeshes.length} meshes)`);
+    // Load floating bird model
+    const floatingResult = await SceneLoader.ImportMeshAsync(
+      '',
+      '/models/animals/',
+      'bird_1_floating.glb',
+      scene
+    );
+
+    floatingTemplateRoot = new TransformNode('bird_floating_template', scene);
+    floatingTemplateRoot.setEnabled(false);
+
+    floatingResult.meshes.forEach(mesh => {
+      if (mesh.name === '__root__') {
+        mesh.parent = floatingTemplateRoot;
+      }
+      mesh.setEnabled(false);
+      if (mesh.name !== '__root__') {
+        floatingTemplateMeshes.push(mesh);
+      }
+    });
+
+    console.log(`[Birds] Loaded bird models: flying(${flyingTemplateMeshes.length}), floating(${floatingTemplateMeshes.length})`);
   } catch (error) {
-    console.error('[Birds] Failed to load bird model:', error);
+    console.error('[Birds] Failed to load bird models:', error);
     return {
       update: () => {},
       dispose: () => {},
     };
   }
 
-  if (templateMeshes.length === 0) {
-    console.error('[Birds] No valid meshes found in bird model');
+  if (flyingTemplateMeshes.length === 0 || floatingTemplateMeshes.length === 0) {
+    console.error('[Birds] No valid meshes found in bird models');
     return {
       update: () => {},
       dispose: () => {},
@@ -184,50 +209,67 @@ export async function createBirdSystem(
     (bird as any).nextState = nextState;
     (bird as any).nextTreeIndex = treeIndex;
 
-    // Make visible when flying
-    bird.meshes.forEach(m => m.setEnabled(true));
+    // Switch to flying meshes
+    bird.flyingMeshes.forEach(m => m.setEnabled(true));
+    bird.floatingMeshes.forEach(m => m.setEnabled(false));
+  }
+
+  function cloneMeshes(
+    templates: AbstractMesh[],
+    parent: TransformNode,
+    prefix: string
+  ): AbstractMesh[] {
+    const cloned: AbstractMesh[] = [];
+    const cloneMap = new Map<AbstractMesh, AbstractMesh>();
+
+    // First pass: clone all meshes
+    templates.forEach((template, idx) => {
+      if ((template as Mesh).clone) {
+        const clone = (template as Mesh).clone(`${prefix}_mesh_${idx}`, null);
+        if (clone) {
+          clone.setEnabled(true);
+          clone.isPickable = false;
+          cloneMap.set(template, clone);
+          cloned.push(clone);
+        }
+      }
+    });
+
+    // Second pass: reconstruct hierarchy
+    templates.forEach(template => {
+      const clone = cloneMap.get(template);
+      if (!clone) return;
+
+      const templateParent = template.parent;
+      if (templateParent && cloneMap.has(templateParent as AbstractMesh)) {
+        clone.parent = cloneMap.get(templateParent as AbstractMesh)!;
+      } else {
+        clone.parent = parent;
+      }
+    });
+
+    return cloned;
   }
 
   // ===========================================
   // CREATE BIRDS
   // ===========================================
   const BIRD_SCALE = 1.0; // Scale multiplier for birds
+  const FLOATING_SCALE = 5.0; // Scale for floating model (match flying model)
 
   for (let i = 0; i < BIRD_COUNT; i++) {
     const root = new TransformNode(`bird_${i}`, scene);
-    root.scaling.setAll(BIRD_SCALE); // Apply 2x scale
+    root.scaling.setAll(BIRD_SCALE);
 
-    // Clone all meshes from template, preserving hierarchy
-    const clonedMeshes: AbstractMesh[] = [];
-    const cloneMap = new Map<AbstractMesh, AbstractMesh>();
+    // Clone both mesh sets
+    const flyingMeshes = cloneMeshes(flyingTemplateMeshes, root, `bird_${i}_fly`);
+    const floatingMeshes = cloneMeshes(floatingTemplateMeshes, root, `bird_${i}_float`);
 
-    // First pass: clone all meshes
-    templateMeshes.forEach((templateMesh, idx) => {
-      if (templateMesh instanceof Mesh) {
-        const clone = templateMesh.clone(`bird_${i}_mesh_${idx}`, null);
-        if (clone) {
-          clone.setEnabled(true);
-          clone.isPickable = false;
-          cloneMap.set(templateMesh, clone);
-          clonedMeshes.push(clone);
-        }
-      }
-    });
+    // Apply scale to floating meshes (in case model was exported at different scale)
+    floatingMeshes.forEach(m => m.scaling.setAll(FLOATING_SCALE));
 
-    // Second pass: reconstruct hierarchy
-    templateMeshes.forEach(templateMesh => {
-      const clone = cloneMap.get(templateMesh);
-      if (!clone) return;
-
-      const templateParent = templateMesh.parent;
-      if (templateParent instanceof Mesh && cloneMap.has(templateParent)) {
-        // Parent was also cloned - use the cloned parent
-        clone.parent = cloneMap.get(templateParent)!;
-      } else {
-        // No cloned parent - attach to bird root
-        clone.parent = root;
-      }
-    });
+    // Start with floating meshes hidden
+    floatingMeshes.forEach(m => m.setEnabled(false));
 
     // Start at a random position
     const startPos = getRandomSkyPosition();
@@ -235,7 +277,8 @@ export async function createBirdSystem(
 
     const bird: Bird = {
       root,
-      meshes: clonedMeshes,
+      flyingMeshes,
+      floatingMeshes,
       state: 'flying',
       position: startPos.clone(),
       startPosition: startPos.clone(),
@@ -297,13 +340,18 @@ export async function createBirdSystem(
         bird.currentTreeIndex = nextTreeIndex;
         bird.stateTimer = 0;
         bird.stateDuration = PERCH_TIME_MIN + Math.random() * (PERCH_TIME_MAX - PERCH_TIME_MIN);
-        bird.meshes.forEach(m => m.setEnabled(false));
+        // Hide all meshes when perched
+        bird.flyingMeshes.forEach(m => m.setEnabled(false));
+        bird.floatingMeshes.forEach(m => m.setEnabled(false));
       } else if (nextState === 'floating') {
-        // Land on water
+        // Land on water - switch to floating model
         bird.state = 'floating';
         bird.stateTimer = 0;
         bird.stateDuration = FLOAT_TIME_MIN + Math.random() * (FLOAT_TIME_MAX - FLOAT_TIME_MIN);
         bird.floatPhase = Math.random() * Math.PI * 2;
+        // Switch to floating meshes
+        bird.flyingMeshes.forEach(m => m.setEnabled(false));
+        bird.floatingMeshes.forEach(m => m.setEnabled(true));
         // Level out rotation for floating
         bird.root.rotation.set(0, bird.root.rotation.y, 0);
       } else {
@@ -366,8 +414,7 @@ export async function createBirdSystem(
 
     // Time to fly away?
     if (bird.stateTimer >= bird.stateDuration) {
-      // Make visible again before flying
-      bird.meshes.forEach(m => m.setEnabled(true));
+      // startFlight will enable the flying meshes
       const { target, state, treeIndex } = pickNewTarget(bird);
       startFlight(bird, target, state, treeIndex);
     }
@@ -378,13 +425,14 @@ export async function createBirdSystem(
   // ===========================================
   function dispose() {
     for (const bird of birds) {
-      bird.meshes.forEach(m => m.dispose());
+      bird.flyingMeshes.forEach(m => m.dispose());
+      bird.floatingMeshes.forEach(m => m.dispose());
       bird.root.dispose();
     }
-    templateMeshes.forEach(m => m.dispose());
-    if (templateRoot) {
-      templateRoot.dispose();
-    }
+    flyingTemplateMeshes.forEach(m => m.dispose());
+    floatingTemplateMeshes.forEach(m => m.dispose());
+    flyingTemplateRoot?.dispose();
+    floatingTemplateRoot?.dispose();
     birds.length = 0;
   }
 

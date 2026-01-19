@@ -205,7 +205,7 @@ export function BabylonCanvas() {
             {/* Progress Bar */}
             <div className="w-48 h-1.5 bg-[#e8e4df] rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-[#d4a574] to-[#c9976a] rounded-full"
+                className="h-full bg-gradient-to-r from-[#d4a574] to-[#c9976a] rounded-full transition-[width] duration-500 ease-out"
                 style={{ width: `${displayProgress}%` }}
               />
             </div>

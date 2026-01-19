@@ -180,11 +180,11 @@ export function createCampfireEffect(
   smoke.maxSize = 0.8;
 
   // Long lifetime - smoke drifts for a while
-  smoke.minLifeTime = 5.0;
-  smoke.maxLifeTime = 10.0;
+  smoke.minLifeTime = 10.0;
+  smoke.maxLifeTime = 20.0;
 
-  // Lower emission rate
-  smoke.emitRate = 6;
+  // Emission rate - enough for continuous column
+  smoke.emitRate = 12;
 
   // Direction - upward with spread
   smoke.direction1 = new Vector3(-0.3, 1, -0.3);
