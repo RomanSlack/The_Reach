@@ -16,15 +16,6 @@ import { getWaterLevel, type LakeConfig } from './terrain';
 // Handles lake mesh, water material, and animated ripple effects
 // including random "fish" ripples for organic feel
 
-// Ripple data structure
-interface Ripple {
-  x: number;      // World position
-  z: number;
-  birthTime: number;
-  duration: number;
-  maxRadius: number;
-}
-
 // Simple seeded random for consistent noise
 function seededRandom(seed: number): number {
   const x = Math.sin(seed * 12.9898 + seed * 78.233) * 43758.5453;
@@ -52,11 +43,19 @@ function noise2D(x: number, y: number): number {
          d * ux * uy;
 }
 
-// Simplified FBM (fewer octaves for performance)
-function fbm(x: number, y: number): number {
-  return noise2D(x, y) * 0.6 +
-         noise2D(x * 2, y * 2) * 0.3 +
-         noise2D(x * 4, y * 4) * 0.1;
+// Fractal Brownian Motion for richer noise
+function fbm(x: number, y: number, octaves: number = 4): number {
+  let value = 0;
+  let amplitude = 0.5;
+  let frequency = 1;
+
+  for (let i = 0; i < octaves; i++) {
+    value += amplitude * noise2D(x * frequency, y * frequency);
+    amplitude *= 0.5;
+    frequency *= 2;
+  }
+
+  return value;
 }
 
 export interface LakeSystem {
@@ -94,13 +93,13 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
   lakeMat.emissiveColor = new Color3(0.05, 0.1, 0.15);
 
   // ===========================================
-  // STATIC BASE NOISE TEXTURE (generated once)
+  // NOISE BUMP TEXTURE (generated once, richer detail)
   // ===========================================
   const textureSize = 256;
   const baseNoiseTexture = new DynamicTexture('waterBaseTex', textureSize, scene, true);
   const baseCtx = baseNoiseTexture.getContext() as CanvasRenderingContext2D;
 
-  // Generate static noise pattern once
+  // Generate noise pattern with more contrast for visible waves
   const baseImageData = baseCtx.createImageData(textureSize, textureSize);
   const baseData = baseImageData.data;
 
@@ -110,19 +109,32 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
       const u = px / textureSize;
       const v = py / textureSize;
 
-      // Multi-scale noise for natural look
-      const n = fbm(u * 8, v * 8);
+      // Multi-scale noise for waves
+      const scale = 6;
+      const eps = 0.008;
 
-      // Convert to normal map (pointing mostly up with slight variation)
-      const nx = (fbm(u * 8 + 0.01, v * 8) - n) * 4;
-      const ny = (fbm(u * 8, v * 8 + 0.01) - n) * 4;
-      const nz = 1.0;
+      // Sample noise at current point and neighbors for normal calculation
+      const h = fbm(u * scale, v * scale, 4);
+      const hL = fbm((u - eps) * scale, v * scale, 4);
+      const hR = fbm((u + eps) * scale, v * scale, 4);
+      const hD = fbm(u * scale, (v - eps) * scale, 4);
+      const hU = fbm(u * scale, (v + eps) * scale, 4);
 
+      // Calculate normal from height differences (subtle for gentle waves)
+      let nx = (hL - hR) * 3;
+      let ny = (hD - hU) * 3;
+      let nz = 1.0;
+
+      // Normalize
       const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      nx /= len;
+      ny /= len;
+      nz /= len;
 
-      baseData[idx] = Math.floor((nx / len * 0.5 + 0.5) * 255);
-      baseData[idx + 1] = Math.floor((ny / len * 0.5 + 0.5) * 255);
-      baseData[idx + 2] = Math.floor((nz / len * 0.5 + 0.5) * 255);
+      // Convert to RGB normal map (0-1 range mapped to 0-255)
+      baseData[idx] = Math.floor((nx * 0.5 + 0.5) * 255);
+      baseData[idx + 1] = Math.floor((ny * 0.5 + 0.5) * 255);
+      baseData[idx + 2] = Math.floor((nz * 0.5 + 0.5) * 255);
       baseData[idx + 3] = 255;
     }
   }
@@ -132,19 +144,20 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
   baseNoiseTexture.wrapU = Texture.WRAP_ADDRESSMODE;
   baseNoiseTexture.wrapV = Texture.WRAP_ADDRESSMODE;
 
-  // Apply as bump texture
+  // Apply as bump texture (subtle)
   lakeMat.bumpTexture = baseNoiseTexture;
-  (lakeMat.bumpTexture as Texture).level = 0.3;
-  (lakeMat.bumpTexture as Texture).uScale = 6;
-  (lakeMat.bumpTexture as Texture).vScale = 6;
+  (lakeMat.bumpTexture as Texture).level = 0.2;
+  (lakeMat.bumpTexture as Texture).uScale = 5;
+  (lakeMat.bumpTexture as Texture).vScale = 5;
 
   lake.material = lakeMat;
 
   // ===========================================
-  // RIPPLE RINGS (3D meshes that expand and fade)
+  // RIPPLE RINGS (flat discs that expand and fade)
   // ===========================================
   interface RippleMesh {
-    mesh: Mesh;
+    outerRing: Mesh;
+    innerRing: Mesh;
     birthTime: number;
     duration: number;
     maxRadius: number;
@@ -155,54 +168,70 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
   const activeRippleMeshes: RippleMesh[] = [];
   const maxRipples = 5;
   let totalTime = 0;
-  let nextRippleTime = 3 + Math.random() * 4; // First ripple after 3-7 seconds
+  let nextRippleTime = 10 + Math.random() * 10;
 
   function getNextRippleDelay(): number {
-    return 5 + Math.random() * 8; // 5-13 seconds between ripples
+    return 15 + Math.random() * 24; // 15-39 seconds (3x less frequent)
   }
 
-  // Create ripple ring material (shared)
-  const rippleMat = new StandardMaterial('rippleMat', scene);
-  rippleMat.diffuseColor = new Color3(0.7, 0.85, 1.0);
-  rippleMat.specularColor = new Color3(1, 1, 1);
-  rippleMat.specularPower = 64;
-  rippleMat.emissiveColor = new Color3(0.15, 0.2, 0.25);
-  rippleMat.alpha = 0;
-  rippleMat.backFaceCulling = false;
-
   function spawnRipple() {
-    // Remove oldest if at max
     if (activeRippleMeshes.length >= maxRipples) {
       const oldest = activeRippleMeshes.shift();
-      if (oldest) oldest.mesh.dispose();
+      if (oldest) {
+        oldest.outerRing.dispose();
+        oldest.innerRing.dispose();
+      }
     }
 
-    // Random position within lake (avoid edges)
+    // Random position within lake
     const angle = Math.random() * Math.PI * 2;
     const dist = 5 + Math.random() * (lakeRadius * 0.5);
     const x = lakeConfig.centerX + Math.cos(angle) * dist;
     const z = lakeConfig.centerZ + Math.sin(angle) * dist;
 
-    // Create torus (ring shape)
-    const ring = MeshBuilder.CreateTorus('ripple', {
+    // Create outer ring (flat torus lying on water)
+    const outerRing = MeshBuilder.CreateTorus('rippleOuter', {
+      diameter: 1,
+      thickness: 0.08,
+      tessellation: 48,
+    }, scene);
+
+    // Position flat on water - torus default is in XZ plane, no rotation needed
+    outerRing.position = new Vector3(x, waterLevel + 0.03, z);
+
+    const outerMat = new StandardMaterial('rippleOuterMat_' + totalTime, scene);
+    outerMat.diffuseColor = new Color3(0.6, 0.75, 0.85);
+    outerMat.specularColor = new Color3(0.3, 0.35, 0.4); // Reduced specular
+    outerMat.specularPower = 32;
+    outerMat.emissiveColor = new Color3(0.08, 0.1, 0.12); // Subtle glow
+    outerMat.alpha = 0.5;
+    outerMat.backFaceCulling = false;
+    outerRing.material = outerMat;
+
+    // Create inner ring (smaller, follows behind)
+    const innerRing = MeshBuilder.CreateTorus('rippleInner', {
       diameter: 0.5,
-      thickness: 0.15,
+      thickness: 0.05,
       tessellation: 32,
     }, scene);
 
-    ring.position = new Vector3(x, waterLevel + 0.02, z);
-    ring.rotation.x = Math.PI / 2;
+    innerRing.position = new Vector3(x, waterLevel + 0.02, z); // Slightly lower
 
-    // Clone material for independent alpha
-    const mat = rippleMat.clone('rippleMat_' + totalTime);
-    mat.alpha = 0.6;
-    ring.material = mat;
+    const innerMat = new StandardMaterial('rippleInnerMat_' + totalTime, scene);
+    innerMat.diffuseColor = new Color3(0.55, 0.7, 0.8);
+    innerMat.specularColor = new Color3(0.2, 0.25, 0.3);
+    innerMat.specularPower = 32;
+    innerMat.emissiveColor = new Color3(0.05, 0.07, 0.09);
+    innerMat.alpha = 0.35;
+    innerMat.backFaceCulling = false;
+    innerRing.material = innerMat;
 
-    const duration = 4 + Math.random() * 2;
-    const maxRadius = 8 + Math.random() * 6;
+    const duration = 5 + Math.random() * 2; // 5-7 seconds for slower fade
+    const maxRadius = 3 + Math.random() * 2; // Half size (3-5 units)
 
     activeRippleMeshes.push({
-      mesh: ring,
+      outerRing,
+      innerRing,
       birthTime: totalTime,
       duration,
       maxRadius,
@@ -210,7 +239,7 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
       z,
     });
 
-    console.log(`[Lake] Fish ripple at (${x.toFixed(1)}, ${z.toFixed(1)}), duration: ${duration.toFixed(1)}s`);
+    console.log(`[Lake] Fish ripple at (${x.toFixed(1)}, ${z.toFixed(1)})`);
   }
 
   // ===========================================
@@ -222,10 +251,10 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     totalTime += deltaTime;
     animTime += deltaTime;
 
-    // Animate base texture UV offset (slow drift)
-    const slowTime = animTime * 0.02;
-    (lakeMat.bumpTexture as Texture).uOffset = Math.sin(slowTime * 0.5) * 0.05 + slowTime * 0.01;
-    (lakeMat.bumpTexture as Texture).vOffset = Math.cos(slowTime * 0.35) * 0.05 + slowTime * 0.008;
+    // Animate base texture UV offset (slow drift) - 2x speed
+    const slowTime = animTime * 0.03;
+    (lakeMat.bumpTexture as Texture).uOffset = Math.sin(slowTime * 0.4) * 0.08 + slowTime * 0.024;
+    (lakeMat.bumpTexture as Texture).vOffset = Math.cos(slowTime * 0.3) * 0.08 + slowTime * 0.018;
 
     // Spawn ripples periodically
     nextRippleTime -= deltaTime;
@@ -238,42 +267,56 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     for (let i = activeRippleMeshes.length - 1; i >= 0; i--) {
       const ripple = activeRippleMeshes[i];
       const age = totalTime - ripple.birthTime;
+      const progress = Math.min(age / ripple.duration, 1);
 
-      if (age > ripple.duration) {
-        // Remove expired ripple
-        ripple.mesh.material?.dispose();
-        ripple.mesh.dispose();
+      // Smooth fade out - stays visible until 50%, then fades linearly to zero
+      const fadeStart = 0.5;
+      let fadeOut = 1;
+      if (progress > fadeStart) {
+        // Linear fade from 1 to 0 over the remaining 50%
+        fadeOut = 1 - ((progress - fadeStart) / (1 - fadeStart));
+      }
+
+      // Remove only after fully faded (progress past duration)
+      if (age > ripple.duration + 0.1) {
+        ripple.outerRing.material?.dispose();
+        ripple.outerRing.dispose();
+        ripple.innerRing.material?.dispose();
+        ripple.innerRing.dispose();
         activeRippleMeshes.splice(i, 1);
         continue;
       }
 
-      // Calculate progress (0 to 1)
-      const progress = age / ripple.duration;
+      // Expand the rings smoothly
+      const easeOut = 1 - Math.pow(1 - progress, 2); // ease out quad
+      const outerRadius = 1 + easeOut * ripple.maxRadius;
+      const innerRadius = 0.5 + easeOut * ripple.maxRadius * 0.6;
 
-      // Expand the ring
-      const currentRadius = 0.5 + progress * ripple.maxRadius;
-      ripple.mesh.scaling.x = currentRadius;
-      ripple.mesh.scaling.z = currentRadius;
+      // Scale rings (they lie flat, so scale X and Z)
+      ripple.outerRing.scaling.x = outerRadius;
+      ripple.outerRing.scaling.z = outerRadius;
+      ripple.outerRing.scaling.y = Math.max(0.3, 1 - progress * 0.5); // Thinner over time
 
-      // Fade out with smooth curve
-      const fadeOut = Math.pow(1 - progress, 2);
-      const mat = ripple.mesh.material as StandardMaterial;
-      if (mat) {
-        mat.alpha = fadeOut * 0.5;
-      }
+      ripple.innerRing.scaling.x = innerRadius;
+      ripple.innerRing.scaling.z = innerRadius;
+      ripple.innerRing.scaling.y = Math.max(0.3, 1 - progress * 0.4);
 
-      // Ring gets thinner as it expands
-      ripple.mesh.scaling.y = 1 - progress * 0.7;
+      // Update alpha with smooth fade
+      const outerMat = ripple.outerRing.material as StandardMaterial;
+      const innerMat = ripple.innerRing.material as StandardMaterial;
+
+      if (outerMat) outerMat.alpha = fadeOut * 0.45;
+      if (innerMat) innerMat.alpha = fadeOut * 0.3;
     }
   }
 
   function dispose() {
-    // Clean up ripple meshes
     for (const ripple of activeRippleMeshes) {
-      ripple.mesh.material?.dispose();
-      ripple.mesh.dispose();
+      ripple.outerRing.material?.dispose();
+      ripple.outerRing.dispose();
+      ripple.innerRing.material?.dispose();
+      ripple.innerRing.dispose();
     }
-    rippleMat.dispose();
     baseNoiseTexture.dispose();
     lakeMat.dispose();
     lake.dispose();
