@@ -1123,6 +1123,25 @@ export function createReachScene(
     return lakeDist >= lakeConfig.radius + lakeConfig.shoreWidth * minDistMultiplier * 0.3;
   };
 
+  // Helper to check minimum distance from existing trees (prevents overlapping)
+  const minTreeSpacing = 1.5; // Minimum distance between tree trunks
+  const isTooCloseToTree = (x: number, z: number): boolean => {
+    // Check against all existing trees (both deciduous and pine)
+    for (const tree of treePositions) {
+      const dx = x - tree.x;
+      const dz = z - tree.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < minTreeSpacing * minTreeSpacing) return true;
+    }
+    for (const pine of pinePositions) {
+      const dx = x - pine.x;
+      const dz = z - pine.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < minTreeSpacing * minTreeSpacing) return true;
+    }
+    return false;
+  };
+
   // --- BIOME-BASED VEGETATION PLACEMENT ---
   // Trees spawn in forest zones, type determined by biome
 
@@ -1138,6 +1157,9 @@ export function createReachScene(
 
     // Trees in forest zones - higher spawn rate
     if (biome.forestDensity > 0.12 && Math.random() < biome.forestDensity * 0.9) {
+      // Check spacing before placing
+      if (isTooCloseToTree(x, z)) continue;
+
       const scale = 0.45 + Math.random() * 0.55;
       const rotY = Math.random() * Math.PI * 2;
 
@@ -1157,7 +1179,7 @@ export function createReachScene(
     const z = (Math.random() - 0.5) * groundSize * 0.9;
     const biome = sampleBiome(x, z);
 
-    if (biome.forestDensity < 0.1 && isValidPosition(x, z, 2)) {
+    if (biome.forestDensity < 0.1 && isValidPosition(x, z, 2) && !isTooCloseToTree(x, z)) {
       const scale = 0.7 + Math.random() * 0.5;
       const rotY = Math.random() * Math.PI * 2;
       treePositions.push({ x, z, scale, rotY });

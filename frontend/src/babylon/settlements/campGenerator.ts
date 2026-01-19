@@ -100,26 +100,26 @@ interface CampConfig {
   rockSpacing: number;
 }
 
-// Scaled up 3x to match CAMP_SCALE_MULTIPLIER
+// Compact camp layout - assets are 3x scale but placed close together
 const DEFAULT_CAMP_CONFIG: CampConfig = {
-  campRadius: 24,
+  campRadius: 8,               // Selection/hitbox radius
 
-  campfireRadius: 0,
-  tentMinRadius: 9,
-  tentMaxRadius: 15,
-  crateMinRadius: 6,
-  crateMaxRadius: 13.5,
-  torchRadius: 16.5,
-  rockMinRadius: 3,
-  rockMaxRadius: 18,
+  campfireRadius: 0,           // Campfire always at center
+  tentMinRadius: 2.5,          // Tents very close to fire
+  tentMaxRadius: 3.5,
+  crateMinRadius: 1.5,         // Crates very close, near campfire
+  crateMaxRadius: 3,
+  torchRadius: 4,              // Torches at camp edge
+  rockMinRadius: 1,            // Rocks scattered throughout
+  rockMaxRadius: 4,
 
-  positionJitter: 0.9,
-  rotationJitter: Math.PI / 6, // ±30 degrees
-  scaleVariation: 0.15,
+  positionJitter: 0.3,         // Small random offset
+  rotationJitter: Math.PI / 8, // ±22.5 degrees
+  scaleVariation: 0.1,         // Slight scale variation
 
-  tentSpacing: 10.5,
-  crateSpacing: 4.5,
-  rockSpacing: 6,
+  tentSpacing: 3,              // Minimum distance between tents
+  crateSpacing: 1.5,           // Crates can be closer
+  rockSpacing: 2,
 };
 
 // ============================================
@@ -136,30 +136,27 @@ interface AssetCounts {
 
 /**
  * Calculate asset counts based on completed tasks
+ * Base camp: 1 campfire, 2 tents, 3 crates, 2 torches, 2 rocks
  */
 function getAssetCounts(completedTasks: number): AssetCounts {
-  // Base counts (minimum camp)
+  // Base counts (starting camp)
   const base: AssetCounts = {
-    tents: 1,
-    crates: 1,
-    torches: 1,
+    tents: 2,
+    crates: 3,
+    torches: 2,
     rocksSmall: 1,
     rocksLarge: 1,
   };
 
   // Progressive additions based on task completion
-  // Every 2-3 tasks adds something to the camp
-  if (completedTasks >= 2) base.crates = 2;
-  if (completedTasks >= 3) base.rocksSmall = 2;
-  if (completedTasks >= 4) base.torches = 2;
-  if (completedTasks >= 5) base.tents = 2;
-  if (completedTasks >= 6) base.crates = 3;
-  if (completedTasks >= 7) base.rocksLarge = 2;
-  if (completedTasks >= 8) base.rocksSmall = 3;
-  if (completedTasks >= 9) base.crates = 4;
+  if (completedTasks >= 3) base.crates = 4;
+  if (completedTasks >= 5) base.tents = 3;
+  if (completedTasks >= 6) base.rocksSmall = 2;
+  if (completedTasks >= 8) base.torches = 3;
   if (completedTasks >= 10) {
-    base.tents = 3;
-    base.torches = 3;
+    base.tents = 4;
+    base.crates = 5;
+    base.rocksLarge = 2;
   }
 
   return base;
@@ -250,8 +247,11 @@ export function generateCampLayout(
 
     const pos = generateCircularPosition(rng, angle, radius, config);
 
-    // Tents face the campfire (center)
-    const faceAngle = Math.atan2(-pos.z, -pos.x) + rng.range(-0.2, 0.2);
+    // Tent opening faces +X in model space
+    // To face campfire at (0,0), we need rotation.y to point +X toward (-pos.x, -pos.z)
+    // In Babylon.js left-handed system: rotation.y rotates +X toward -Z (clockwise from above)
+    // Formula: atan2(pos.z, -pos.x) points tent opening toward center
+    const faceAngle = Math.atan2(pos.z, -pos.x) + rng.range(-0.15, 0.15);
 
     slots.push({
       type: CampAssetType.Tent,
@@ -259,8 +259,8 @@ export function generateCampLayout(
       localZ: pos.z,
       rotation: faceAngle,
       scale: 1 + rng.range(-config.scaleVariation * 0.5, config.scaleVariation * 0.5),
-      required: i === 0, // First tent is required
-      minTasks: i * 4,   // Additional tents unlock progressively
+      required: i < 2, // First 2 tents are required
+      minTasks: i < 2 ? 0 : (i - 1) * 5, // Additional tents unlock progressively
     });
     placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Tent });
   }
@@ -286,8 +286,8 @@ export function generateCampLayout(
           localZ: pos.z,
           rotation: rng.range(0, Math.PI * 2),
           scale: 1 + rng.range(-config.scaleVariation, config.scaleVariation),
-          required: i === 0,
-          minTasks: Math.floor(i * 1.5),
+          required: i < 3, // First 3 crates are required
+          minTasks: i < 3 ? 0 : (i - 2) * 3, // Additional crates unlock progressively
         });
         placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Crate });
         placed = true;
@@ -315,8 +315,8 @@ export function generateCampLayout(
       localZ: pos.z,
       rotation: rng.range(0, Math.PI * 2),
       scale: 1 + rng.range(-config.scaleVariation * 0.3, config.scaleVariation * 0.3),
-      required: i === 0,
-      minTasks: i * 3,
+      required: i < 2, // First 2 torches are required
+      minTasks: i < 2 ? 0 : (i - 1) * 4, // Additional torches unlock progressively
     });
     placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.TorchStand });
   }
@@ -329,6 +329,7 @@ export function generateCampLayout(
     { type: CampAssetType.RockLarge, count: counts.rocksLarge },
   ];
 
+  let totalRocksPlaced = 0;
   for (const { type, count } of rockTypes) {
     for (let i = 0; i < count; i++) {
       let attempts = 0;
@@ -350,11 +351,12 @@ export function generateCampLayout(
             localZ: pos.z,
             rotation: rng.range(0, Math.PI * 2),
             scale: 1 + rng.range(-config.scaleVariation, config.scaleVariation),
-            required: false,
-            minTasks: i,
+            required: totalRocksPlaced < 2, // First 2 rocks are required
+            minTasks: totalRocksPlaced < 2 ? 0 : (totalRocksPlaced - 1) * 3,
           });
           placedPositions.push({ x: pos.x, z: pos.z, type });
           placed = true;
+          totalRocksPlaced++;
         }
         attempts++;
       }

@@ -110,24 +110,27 @@ class AssetCache {
       const templateRoot = new TransformNode(`template_${definition.type}`, scene);
       templateRoot.setEnabled(false); // Hide template
 
-      // Parent all loaded meshes to the template root
+      // Find root meshes (meshes without parents or with __root__ as parent)
+      // and parent them to our template root while preserving internal hierarchy
       const meshes: AbstractMesh[] = [];
       result.meshes.forEach(mesh => {
-        if (!mesh.parent) {
+        // Only reparent root-level meshes to preserve hierarchy
+        if (!mesh.parent || mesh.parent.name === '__root__') {
           mesh.parent = templateRoot;
         }
         mesh.setEnabled(false);
         meshes.push(mesh);
       });
 
-      // Apply base scale
+      // Apply base scale to template root
       templateRoot.scaling = new Vector3(
         definition.baseScale,
         definition.baseScale,
         definition.baseScale
       );
 
-      console.log(`[AssetLoader] Loaded ${definition.type} (${meshes.length} meshes)`);
+      const meshCount = meshes.filter(m => m instanceof Mesh).length;
+      console.log(`[AssetLoader] Loaded ${definition.type}: ${meshes.length} total, ${meshCount} Mesh instances`);
 
       return {
         definition,
@@ -161,18 +164,41 @@ class AssetCache {
       instanceRoot.parent = parent;
     }
 
-    // Clone all meshes
+    // Build a map of template mesh -> cloned mesh for hierarchy reconstruction
+    const cloneMap = new Map<AbstractMesh, AbstractMesh>();
     const clonedMeshes: AbstractMesh[] = [];
+
+    // First pass: clone all meshes
     cached.meshes.forEach((templateMesh, index) => {
       if (templateMesh instanceof Mesh) {
-        const clone = templateMesh.clone(`${name}_mesh_${index}`, instanceRoot);
+        const clone = templateMesh.clone(`${name}_mesh_${index}`, null);
         if (clone) {
           clone.setEnabled(true);
           clone.isPickable = cached.definition.isPickable;
+          cloneMap.set(templateMesh, clone);
           clonedMeshes.push(clone);
         }
       }
     });
+
+    // Second pass: reconstruct hierarchy
+    cached.meshes.forEach(templateMesh => {
+      const clone = cloneMap.get(templateMesh);
+      if (!clone) return;
+
+      const templateParent = templateMesh.parent;
+      if (templateParent instanceof Mesh && cloneMap.has(templateParent)) {
+        // Parent was also cloned - use the cloned parent
+        clone.parent = cloneMap.get(templateParent)!;
+      } else {
+        // No cloned parent - attach to instance root
+        clone.parent = instanceRoot;
+      }
+    });
+
+    if (clonedMeshes.length === 0) {
+      console.warn(`[AssetLoader] No meshes cloned for ${type} - template had ${cached.meshes.length} meshes`);
+    }
 
     // Apply base scale to instance root
     instanceRoot.scaling = new Vector3(

@@ -62,7 +62,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
     type: CampAssetType.Tent,
     path: '/models/camp_1/tent_1.glb',
     baseScale: 3.0,
-    yOffset: 0,
+    yOffset: 0, // Reset to 0 - will adjust after seeing actual placement
     castsShadow: true,
     receivesShadow: true,
     isPickable: true,

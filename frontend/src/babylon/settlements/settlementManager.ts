@@ -25,6 +25,7 @@ import {
   type PlacedAsset,
   type TerrainSampler,
   CampAssetType,
+  CAMP_ASSETS,
   getSettlementLevel,
   SettlementLevel,
 } from './types';
@@ -118,17 +119,23 @@ export class SettlementManager {
       const worldZ = project.position_z + slot.localZ;
       const terrainY = this.terrainSampler.getHeight(worldX, worldZ);
 
+      // Get asset definition for yOffset
+      const assetDef = CAMP_ASSETS[slot.type];
+      const finalY = terrainY + (assetDef?.yOffset ?? 0);
+
       // Create asset instance
       const instance = createAssetInstance(
         slot.type,
         `${project.id}_${slot.type}_${placedAssets.length}`,
-        new Vector3(slot.localX, terrainY, slot.localZ),
+        new Vector3(slot.localX, finalY, slot.localZ),
         slot.rotation,
         slot.scale,
         rootNode
       );
 
       if (instance) {
+        console.log(`[Settlement] Placed ${slot.type} at (${slot.localX.toFixed(1)}, ${finalY.toFixed(1)}, ${slot.localZ.toFixed(1)}) with ${instance.meshes.length} meshes`);
+
         // Add shadow casting/receiving
         instance.meshes.forEach(mesh => {
           if (this.shadowGenerator) {
@@ -197,18 +204,24 @@ export class SettlementManager {
     // Create a flat disc as the hitbox
     const hitbox = MeshBuilder.CreateDisc(`hitbox_${projectId}`, {
       radius: radius,
-      tessellation: 32,
+      tessellation: 12, // Low tessellation since it's invisible
     }, this.scene);
 
     // Rotate to lay flat on the ground
     hitbox.rotation.x = Math.PI / 2;
-    hitbox.position.y = terrainY + 0.5; // Slightly above ground
+    hitbox.position.y = terrainY + 0.1; // Just above ground
 
-    // Make it invisible but pickable
-    const hitboxMat = new StandardMaterial(`hitboxMat_${projectId}`, this.scene);
-    hitboxMat.alpha = 0; // Fully invisible
-    hitbox.material = hitboxMat;
+    // Make it completely invisible - use layerMask to exclude from camera rendering
+    // but still allow ray picking
+    hitbox.layerMask = 0; // Exclude from all camera layer masks (cameras default to 0x0FFFFFFF)
     hitbox.isPickable = true;
+
+    // Ensure it doesn't affect anything
+    hitbox.receiveShadows = false;
+    hitbox.alwaysSelectAsActiveMesh = false;
+
+    // No material needed - not rendered
+    hitbox.material = null;
 
     // Add metadata for picking
     hitbox.metadata = {
@@ -247,7 +260,7 @@ export class SettlementManager {
 
     const terrainY = this.terrainSampler.getHeight(x, z);
 
-    const plane = MeshBuilder.CreatePlane('label', { width: 10, height: 2.5 }, this.scene);
+    const plane = MeshBuilder.CreatePlane('label', { width: 15, height: 3.75 }, this.scene);
     const mat = new StandardMaterial('labelMat', this.scene);
     mat.diffuseTexture = texture;
     mat.emissiveTexture = texture;
