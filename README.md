@@ -12,7 +12,7 @@
 [![Zustand](https://img.shields.io/badge/Zustand-443E38?style=flat-square&logo=react&logoColor=white)](https://zustand-demo.pmnd.rs/)
 
 <p align="center">
-  <img src="readme_images/The_reach_2_readme.png" alt="The Reach" width="800"/>
+  <img src="readme_images/The_reach_2_readme_banner.jpg" alt="The Reach" width="800"/>
 </p>
 
 Your projects as living worlds. Each project becomes a procedurally generated settlement that evolves from a humble campsite to a thriving castle as you make progress.

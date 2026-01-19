@@ -239,9 +239,9 @@ export function createCampfireEffect(
 
     dispose() {
       particles.stop();
-      particles.dispose();
+      particles.dispose(false); // Don't dispose shared texture
       smoke.stop();
-      smoke.dispose();
+      smoke.dispose(false); // Don't dispose shared texture
       light.dispose();
       emitter.dispose();
       smokeEmitter.dispose();
@@ -317,7 +317,7 @@ export function createTorchEffect(
 
   function dispose() {
     particles.stop();
-    particles.dispose();
+    particles.dispose(false); // Don't dispose shared texture
     emitter.dispose();
   }
 
