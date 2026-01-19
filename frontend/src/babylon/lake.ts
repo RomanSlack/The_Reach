@@ -336,10 +336,10 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
 
   function spawnSplash(x: number, z: number) {
     // Create emitter at click position (slightly above water)
-    const emitter = new TransformNode('splashEmitter', scene);
+    const emitter = new TransformNode('splashEmitter_' + Date.now(), scene);
     emitter.position = new Vector3(x, waterLevel + 0.1, z);
 
-    const splash = new ParticleSystem('splash_' + Date.now(), 40, scene);
+    const splash = new ParticleSystem('splash_' + Date.now(), 50, scene);
     splash.particleTexture = splashTexture;
     splash.emitter = emitter;
 
@@ -375,20 +375,19 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     // Additive blending for more visibility
     splash.blendMode = ParticleSystem.BLENDMODE_ADD;
 
-    // Emit a quick burst
-    splash.emitRate = 80;
+    // Use manual emit for one-shot burst
+    splash.emitRate = 0;
+    splash.manualEmitCount = 30;
 
     splash.start();
 
-    // Stop emitting after a short burst, then clean up after particles fade
+    // Clean up after particles fade (don't dispose texture)
     setTimeout(() => {
       splash.stop();
-    }, 100);
-
-    setTimeout(() => {
+      splash.particleTexture = null; // Prevent texture disposal
       splash.dispose();
       emitter.dispose();
-    }, 1000);
+    }, 1500);
   }
 
   function spawnRippleAt(x: number, z: number) {
