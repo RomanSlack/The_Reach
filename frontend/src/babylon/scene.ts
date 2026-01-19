@@ -38,6 +38,7 @@ import { createLake } from './lake';
 import { createSettlementManager, type SettlementManager } from './settlements';
 import { createBirdSystem, type BirdSystem } from './birds';
 import { createSheepSystem, type SheepSystem } from './sheep';
+import { createFishSystem, type FishSystem } from './fish';
 
 export interface ReachScene {
   scene: Scene;
@@ -53,7 +54,7 @@ export interface ReachScene {
 
 export function createReachScene(
   engine: Engine,
-  onProjectClick: (projectId: number) => void,
+  onProjectClick: (projectId: number | null) => void,
   onProjectMove?: (projectId: number, x: number, z: number) => void
 ): ReachScene {
   const scene = new Scene(engine);
@@ -1524,7 +1525,22 @@ export function createReachScene(
       console.error('[Scene] Failed to initialize sheep system:', err);
     });
 
-  // Update lake, birds, and sheep each frame
+  // ===========================================
+  // AMBIENT FISH
+  // ===========================================
+  let fishSystem: FishSystem | null = null;
+
+  // Initialize fish asynchronously
+  createFishSystem(scene, lakeConfig)
+    .then(system => {
+      fishSystem = system;
+      console.log('[Scene] Fish system ready');
+    })
+    .catch(err => {
+      console.error('[Scene] Failed to initialize fish system:', err);
+    });
+
+  // Update lake, birds, sheep, and fish each frame
   let lastTime = performance.now();
   scene.onBeforeRenderObservable.add(() => {
     const currentTime = performance.now();
@@ -1533,6 +1549,7 @@ export function createReachScene(
     lakeSystem.update(deltaTime);
     birdSystem?.update(deltaTime);
     sheepSystem?.update(deltaTime);
+    fishSystem?.update(deltaTime);
     settlementManager?.update(deltaTime);
   });
 
@@ -1594,17 +1611,8 @@ export function createReachScene(
   }
 
   function resetCamera() {
+    // Just deselect - don't move the camera
     setSelectedSettlement(null);
-
-    Animation.CreateAndStartAnimation(
-      'cameraReset', camera, 'target', 60, 40,
-      camera.target, Vector3.Zero(), Animation.ANIMATIONLOOPMODE_CONSTANT
-    );
-
-    Animation.CreateAndStartAnimation(
-      'cameraZoomOut', camera, 'radius', 60, 40,
-      camera.radius, 50, Animation.ANIMATIONLOOPMODE_CONSTANT
-    );
   }
 
   // ===========================================
@@ -1770,6 +1778,9 @@ export function createReachScene(
       if (pick?.hit && pick.pickedMesh?.metadata?.type === 'settlement') {
         const projectId = pick.pickedMesh.metadata.projectId;
         onProjectClick(projectId);
+      } else if (groundPos) {
+        // Clicked on ground (not a settlement) - deselect
+        onProjectClick(null);
       }
     }
   });
@@ -1788,6 +1799,7 @@ export function createReachScene(
       window.removeEventListener('keyup', handleKeyUp);
       birdSystem?.dispose();
       sheepSystem?.dispose();
+      fishSystem?.dispose();
       settlementManager?.dispose();
       pipeline.dispose();
       glowLayer.dispose();

@@ -18,10 +18,11 @@ import {
 } from '@babylonjs/core';
 
 // ============================================
-// FIRE TEXTURE GENERATION
+// TEXTURE GENERATION
 // ============================================
 
 let sharedFireTexture: Texture | null = null;
+let sharedSmokeTexture: Texture | null = null;
 
 /**
  * Create a simple procedural fire particle texture
@@ -52,12 +53,42 @@ function getFireTexture(scene: Scene): Texture {
   return texture;
 }
 
+/**
+ * Create a smoke particle texture
+ * Gray gradient that fades out at edges
+ */
+function getSmokeTexture(scene: Scene): Texture {
+  if (sharedSmokeTexture) return sharedSmokeTexture;
+
+  const size = 64;
+  const texture = new DynamicTexture('smokeParticleTex', size, scene, false);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+
+  // Create radial gradient - visible smoke puff
+  const gradient = ctx.createRadialGradient(
+    size / 2, size / 2, 0,
+    size / 2, size / 2, size / 2
+  );
+  gradient.addColorStop(0, 'rgba(200, 200, 200, 1)');
+  gradient.addColorStop(0.4, 'rgba(160, 160, 160, 0.8)');
+  gradient.addColorStop(0.7, 'rgba(130, 130, 130, 0.4)');
+  gradient.addColorStop(1, 'rgba(100, 100, 100, 0)');
+
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+
+  texture.update();
+  sharedSmokeTexture = texture;
+  return texture;
+}
+
 // ============================================
 // FIRE EFFECT INTERFACE
 // ============================================
 
 export interface FireEffect {
   particleSystem: ParticleSystem;
+  smokeSystem: ParticleSystem | null;
   light: PointLight;
   baseIntensity: number;
   update: (time: number) => void;
@@ -74,13 +105,14 @@ export function createCampfireEffect(
   localPosition: Vector3 = Vector3.Zero()
 ): FireEffect {
   const fireTexture = getFireTexture(scene);
+  const smokeTexture = getSmokeTexture(scene);
 
   // Create emitter node
   const emitter = new TransformNode('campfireEmitter', scene);
   emitter.parent = parent;
   emitter.position = localPosition.add(new Vector3(0, 0.2, 0)); // Low, near fire pit
 
-  // Particle system
+  // ========== FIRE PARTICLES ==========
   const particles = new ParticleSystem('campfireParticles', 80, scene);
   particles.particleTexture = fireTexture;
   particles.emitter = emitter;
@@ -123,7 +155,54 @@ export function createCampfireEffect(
   // Start the system
   particles.start();
 
-  // Point light for fire glow (subtle)
+  // ========== SMOKE PARTICLES ==========
+  // Create smoke emitter above the fire
+  const smokeEmitter = new TransformNode('campfireSmokeEmitter', scene);
+  smokeEmitter.parent = parent;
+  smokeEmitter.position = localPosition.add(new Vector3(0, 1.0, 0)); // Above the flames
+
+  const smoke = new ParticleSystem('campfireSmoke', 30, scene);
+  smoke.particleTexture = smokeTexture;
+  smoke.emitter = smokeEmitter;
+
+  // Emission shape - wider area above fire
+  smoke.minEmitBox = new Vector3(-0.2, 0, -0.2);
+  smoke.maxEmitBox = new Vector3(0.2, 0.3, 0.2);
+
+  // Smoke colors - visible gray fading to transparent
+  smoke.color1 = new Color4(0.7, 0.7, 0.7, 0.6);
+  smoke.color2 = new Color4(0.55, 0.55, 0.55, 0.5);
+  smoke.colorDead = new Color4(0.4, 0.4, 0.4, 0);
+
+  // Larger, softer particles
+  smoke.minSize = 0.4;
+  smoke.maxSize = 0.8;
+
+  // Long lifetime - smoke drifts for a while
+  smoke.minLifeTime = 5.0;
+  smoke.maxLifeTime = 10.0;
+
+  // Lower emission rate
+  smoke.emitRate = 6;
+
+  // Direction - upward with spread
+  smoke.direction1 = new Vector3(-0.3, 1, -0.3);
+  smoke.direction2 = new Vector3(0.3, 1.5, 0.3);
+
+  // Gentle initial speed
+  smoke.minEmitPower = 0.08;
+  smoke.maxEmitPower = 0.15;
+  smoke.updateSpeed = 0.01;
+
+  // Upward drift with sideways wind effect
+  smoke.gravity = new Vector3(0.12, 0.2, 0.05);
+
+  // Standard blending for smoke (not additive)
+  smoke.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+
+  smoke.start();
+
+  // ========== POINT LIGHT ==========
   const light = new PointLight('campfireLight', Vector3.Zero(), scene);
   light.parent = emitter;
   light.position = new Vector3(0, 0.5, 0);
@@ -148,12 +227,16 @@ export function createCampfireEffect(
   function dispose() {
     particles.stop();
     particles.dispose();
+    smoke.stop();
+    smoke.dispose();
     light.dispose();
     emitter.dispose();
+    smokeEmitter.dispose();
   }
 
   return {
     particleSystem: particles,
+    smokeSystem: smoke,
     light,
     baseIntensity,
     update,
@@ -233,6 +316,7 @@ export function createTorchEffect(
 
   return {
     particleSystem: particles,
+    smokeSystem: null, // No smoke for torch
     light: null as unknown as PointLight, // No light for torch
     baseIntensity: 0,
     update,
@@ -288,6 +372,10 @@ export class FireManager {
     if (sharedFireTexture) {
       sharedFireTexture.dispose();
       sharedFireTexture = null;
+    }
+    if (sharedSmokeTexture) {
+      sharedSmokeTexture.dispose();
+      sharedSmokeTexture = null;
     }
   }
 }

@@ -6,6 +6,10 @@ import {
   TransformNode,
   Mesh,
   ShadowGenerator,
+  ParticleSystem,
+  Color4,
+  DynamicTexture,
+  Texture,
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 import type { LakeConfig } from './terrain';
@@ -22,6 +26,7 @@ interface Sheep {
   root: TransformNode;
   standingMeshes: AbstractMesh[];
   eatingMeshes: AbstractMesh[];
+  grazeParticles: ParticleSystem; // Grass particles when eating
   state: SheepState;
   stateTimer: number;
   stateDuration: number;
@@ -48,9 +53,9 @@ export interface SheepSystem {
 }
 
 // Configuration
-const HERD_COUNT = 3;
-const SHEEP_PER_HERD_MIN = 3;
-const SHEEP_PER_HERD_MAX = 6;
+const HERD_COUNT = 10; // was 3
+const SHEEP_PER_HERD_MIN = 7; //  3 was original
+const SHEEP_PER_HERD_MAX = 30; //6 is the original
 const HERD_SPREAD = 4; // How spread out sheep are within a herd
 const HERD_MOVE_SPEED = 0.8; // Units per second for herd movement
 const SHEEP_WALK_SPEED = 1.2; // Individual sheep speed
@@ -167,6 +172,72 @@ export async function createSheepSystem(
       updateCampPositions: () => {},
       dispose: () => {},
     };
+  }
+
+  // ===========================================
+  // GRASS PARTICLE TEXTURE
+  // ===========================================
+  const grassTexture = new DynamicTexture('grassParticleTex', 32, scene, false);
+  const grassCtx = grassTexture.getContext() as CanvasRenderingContext2D;
+
+  // Simple soft grass particle - vertical blade shape
+  const gradient = grassCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gradient.addColorStop(0, 'rgba(100, 180, 80, 1)');
+  gradient.addColorStop(0.5, 'rgba(80, 150, 60, 0.8)');
+  gradient.addColorStop(1, 'rgba(60, 120, 40, 0)');
+  grassCtx.fillStyle = gradient;
+  grassCtx.fillRect(0, 0, 32, 32);
+  grassTexture.update();
+
+  function createGrazeParticles(parent: TransformNode): ParticleSystem {
+    const particles = new ParticleSystem('grazeParticles', 40, scene); // 2x more particles
+    particles.particleTexture = grassTexture;
+
+    // Emitter at ground level in front of sheep
+    const emitter = new TransformNode('grazeEmitter', scene);
+    emitter.parent = parent;
+    emitter.position = new Vector3(0, 0, 0.3); // At ground, in front
+    particles.emitter = emitter;
+
+    // Tight emission area - right from the ground
+    particles.minEmitBox = new Vector3(-0.05, 0, -0.05);
+    particles.maxEmitBox = new Vector3(0.05, 0, 0.05);
+
+    // Green grass colors
+    particles.color1 = new Color4(0.4, 0.7, 0.3, 1);
+    particles.color2 = new Color4(0.3, 0.6, 0.2, 1);
+    particles.colorDead = new Color4(0.5, 0.7, 0.3, 0);
+
+    // Small particles
+    particles.minSize = 0.05;
+    particles.maxSize = 0.12;
+
+    // Short lifetime - quick puffs
+    particles.minLifeTime = 0.4;
+    particles.maxLifeTime = 0.8;
+
+    // Higher emission rate for density
+    particles.emitRate = 16; // 2x more
+
+    // Float mostly upward, less spread
+    particles.direction1 = new Vector3(-0.1, 0.8, -0.1);
+    particles.direction2 = new Vector3(0.1, 1, 0.1);
+
+    // Gentle speed
+    particles.minEmitPower = 0.1;
+    particles.maxEmitPower = 0.25;
+    particles.updateSpeed = 0.01;
+
+    // Slight gravity to make them float then fall
+    particles.gravity = new Vector3(0, -0.2, 0);
+
+    // Standard blending (not additive)
+    particles.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+
+    // Start stopped - will be started when grazing
+    particles.stop();
+
+    return particles;
   }
 
   // ===========================================
@@ -316,6 +387,13 @@ export async function createSheepSystem(
     sheep.standingMeshes.forEach(m => m.setEnabled(showStanding));
     sheep.eatingMeshes.forEach(m => m.setEnabled(!showStanding));
 
+    // Start/stop grass particles (only when grazing on land, not drinking)
+    if (state === 'grazing') {
+      sheep.grazeParticles.start();
+    } else {
+      sheep.grazeParticles.stop();
+    }
+
     // Set duration based on state
     switch (state) {
       case 'grazing':
@@ -393,6 +471,9 @@ export async function createSheepSystem(
       // Start with eating hidden
       eatingMeshes.forEach(m => m.setEnabled(false));
 
+      // Create grass particles for grazing
+      const grazeParticles = createGrazeParticles(root);
+
       // Random offset within herd
       const offsetX = (Math.random() - 0.5) * HERD_SPREAD * 2;
       const offsetZ = (Math.random() - 0.5) * HERD_SPREAD * 2;
@@ -411,6 +492,7 @@ export async function createSheepSystem(
         root,
         standingMeshes,
         eatingMeshes,
+        grazeParticles,
         state: 'idle',
         stateTimer: 0,
         stateDuration: IDLE_TIME_MIN + Math.random() * (IDLE_TIME_MAX - IDLE_TIME_MIN),
@@ -595,6 +677,8 @@ export async function createSheepSystem(
   function dispose() {
     for (const herd of herds) {
       for (const sheep of herd.sheep) {
+        sheep.grazeParticles.stop();
+        sheep.grazeParticles.dispose();
         sheep.standingMeshes.forEach(m => m.dispose());
         sheep.eatingMeshes.forEach(m => m.dispose());
         sheep.root.dispose();
@@ -604,6 +688,7 @@ export async function createSheepSystem(
     eatingTemplateMeshes.forEach(m => m.dispose());
     standingTemplateRoot?.dispose();
     eatingTemplateRoot?.dispose();
+    grassTexture.dispose();
     herds.length = 0;
   }
 
