@@ -223,12 +223,15 @@ export function createCampfireEffect(
     intensityMultiplier: 1.0, // Can be changed externally for night mode
 
     // Flicker update function
+    // =====================================================
+    // FLICKER SPEED - Edit these multipliers to adjust speed
+    // Lower values = slower flicker
+    // =====================================================
     update(time: number) {
-      // Multi-frequency flicker for realistic fire (slowed down)
-      const flicker1 = Math.sin(time * 8) * 0.1;
-      const flicker2 = Math.sin(time * 12) * 0.08;
-      const flicker3 = Math.sin(time * 19) * 0.05;
-      const randomFlicker = (Math.random() - 0.5) * 0.1;
+      const flicker1 = Math.sin(time * 4) * 0.1;   // Slow wave
+      const flicker2 = Math.sin(time * 6) * 0.08;  // Medium wave
+      const flicker3 = Math.sin(time * 9) * 0.05;  // Faster wave
+      const randomFlicker = (Math.random() - 0.5) * 0.08;
 
       const flickerAmount = flicker1 + flicker2 + flicker3 + randomFlicker;
       light.intensity = (baseIntensity + flickerAmount) * this.intensityMultiplier;

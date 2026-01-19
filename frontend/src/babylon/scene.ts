@@ -810,36 +810,37 @@ export function createReachScene(
   // ===========================================
   // STARS (visible at night)
   // ===========================================
-  const stars: Mesh[] = [];
   const starMat = new StandardMaterial('starMat', scene);
-  starMat.emissiveColor = new Color3(3, 3, 3); // HDR bright white (values > 1 for bloom)
+  starMat.emissiveColor = new Color3(1, 1, 1);
   starMat.disableLighting = true;
   starMat.alpha = 0; // Hidden during day
 
+  // Create a parent node for all stars that follows the camera
+  const starsParent = new TransformNode('starsParent', scene);
+
   // Create stars distributed on a sphere
-  const starCount = 300;
-  const starRadius = 480; // Inside the sky sphere (sky is 500 radius)
+  const starCount = 1000;
+  const starRadius = 300;
   for (let i = 0; i < starCount; i++) {
-    // Random position on sphere using spherical coordinates
+    // Random position on sphere
     const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(2 * Math.random() - 1);
-    // Only place stars in upper hemisphere (above horizon)
-    if (phi > Math.PI * 0.55) continue;
+    const phi = Math.random() * Math.PI * 0.5; // Upper hemisphere only
 
     const x = starRadius * Math.sin(phi) * Math.cos(theta);
     const y = starRadius * Math.cos(phi);
     const z = starRadius * Math.sin(phi) * Math.sin(theta);
 
-    // Bigger stars - visible from far away
-    const starSize = 1.5 + Math.random() * 2.5; // 1.5 to 4.0 diameter
+    const starSize = 2 + Math.random() * 3;
     const star = MeshBuilder.CreateSphere(`star_${i}`, { diameter: starSize, segments: 4 }, scene);
     star.position = new Vector3(x, y, z);
     star.material = starMat;
-    stars.push(star);
-
-    // Add to glow layer for bright effect
-    glowLayer.addIncludedOnlyMesh(star);
+    star.parent = starsParent;
   }
+
+  // Make stars follow camera position each frame
+  scene.onBeforeRenderObservable.add(() => {
+    starsParent.position.copyFrom(camera.position);
+  });
 
   // ===========================================
   // GOD RAYS (Volumetric Light Scattering)
