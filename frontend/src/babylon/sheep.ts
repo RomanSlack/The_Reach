@@ -53,9 +53,9 @@ export interface SheepSystem {
 }
 
 // Configuration
-const HERD_COUNT = 10; // was 3
-const SHEEP_PER_HERD_MIN = 7; //  3 was original
-const SHEEP_PER_HERD_MAX = 30; //6 is the original
+const HERD_COUNT = 4; // was 3
+const SHEEP_PER_HERD_MIN = 3; //  3 was original
+const SHEEP_PER_HERD_MAX = 7; //6 is the original
 const HERD_SPREAD = 4; // How spread out sheep are within a herd
 const HERD_MOVE_SPEED = 0.8; // Units per second for herd movement
 const SHEEP_WALK_SPEED = 1.2; // Individual sheep speed
