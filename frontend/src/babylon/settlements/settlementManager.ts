@@ -12,6 +12,7 @@ import {
   Mesh,
   MeshBuilder,
   StandardMaterial,
+  PBRMaterial,
   DynamicTexture,
   Color3,
   AbstractMesh,
@@ -160,6 +161,23 @@ export class SettlementManager {
         if (slot.type === CampAssetType.TorchStand && this.glowLayer) {
           instance.meshes.forEach(mesh => {
             this.glowLayer!.addIncludedOnlyMesh(mesh as Mesh);
+          });
+        }
+
+        // Apply project color to tent fabric
+        if (slot.type === CampAssetType.Tent && project.color) {
+          instance.meshes.forEach(mesh => {
+            // Find the tent fabric material (named "Material.001" in Blender)
+            if (mesh.material && mesh.material.name.includes('Material.001')) {
+              // Clone the material so we don't affect other tent instances
+              const coloredMat = mesh.material.clone(`tent_fabric_${project.id}`);
+              if (coloredMat instanceof PBRMaterial) {
+                coloredMat.albedoColor = Color3.FromHexString(project.color);
+              } else if (coloredMat instanceof StandardMaterial) {
+                coloredMat.diffuseColor = Color3.FromHexString(project.color);
+              }
+              mesh.material = coloredMat;
+            }
           });
         }
 

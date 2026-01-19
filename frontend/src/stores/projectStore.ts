@@ -38,10 +38,16 @@ interface ProjectStore {
   setSortBy: (sort: SortOption) => void;
 }
 
-// Warm, muted palette
+// Warm, muted palette - medieval fabric tones
 const warmColors = [
-  '#d4a574', '#a8c4a2', '#c9b8a8', '#d4b896',
-  '#b8a9c4', '#a4b8c4', '#c4a8a8', '#b8c4a4',
+  '#e0a870', // warm tan/orange
+  '#9fcf9a', // sage green
+  '#d4b8a0', // taupe/cream
+  '#e0c090', // wheat/gold
+  '#c4a8d8', // lavender
+  '#98c4d8', // dusty blue
+  '#d8a0a0', // dusty rose
+  '#c8d4a0', // pale olive
 ];
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
