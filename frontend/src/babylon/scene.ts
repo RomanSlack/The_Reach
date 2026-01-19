@@ -35,6 +35,7 @@ import type { Project } from '../api/client';
 import { generateTerrainHeight, distanceToLake, getLakeRadiusAtAngle, getWaterLevel, type LakeConfig } from './terrain';
 import { createCloudShadows } from './cloudShadows';
 import { createLake } from './lake';
+import { createSettlementManager, type SettlementManager } from './settlements';
 
 export interface ReachScene {
   scene: Scene;
@@ -1458,155 +1459,49 @@ export function createReachScene(
   });
 
   // ===========================================
-  // PROJECT ISLANDS
+  // PROJECT SETTLEMENTS (Procedural Camps)
   // ===========================================
-  const islandMeshes = new Map<number, { base: Mesh; marker: Mesh; label: Mesh | null }>();
-  let selectedIslandId: number | null = null;
+  // Settlement manager handles procedural camp generation
+  // Assets are loaded asynchronously, settlements appear once ready
+  let settlementManager: SettlementManager | null = null;
+  let pendingProjects: Project[] = [];
 
-  function createIsland(project: Project): { base: Mesh; marker: Mesh; label: Mesh | null } {
-    const color = Color3.FromHexString(project.color);
-    const terrainY = getTerrainHeight(project.position_x, project.position_z);
+  // Terrain sampler for settlements to conform to terrain
+  const terrainSampler = {
+    getHeight: (x: number, z: number) => getTerrainHeight(x, z),
+  };
 
-    const base = MeshBuilder.CreateCylinder(`island-${project.id}`, {
-      height: 2,
-      diameterTop: 8,
-      diameterBottom: 10,
-      tessellation: 6,
-    }, scene);
+  // Initialize settlement manager asynchronously
+  createSettlementManager(scene, terrainSampler, shadowGenerator, highlightLayer, glowLayer)
+    .then(manager => {
+      settlementManager = manager;
+      console.log('[Scene] Settlement manager ready');
 
-    const baseMat = new PBRMaterial(`baseMat-${project.id}`, scene);
-    baseMat.albedoColor = color;
-    baseMat.metallic = 0.1;
-    baseMat.roughness = 0.7;
-    baseMat.emissiveColor = color.scale(0.05);
-    base.material = baseMat;
-    base.position = new Vector3(project.position_x, terrainY + 1, project.position_z);
-    base.metadata = { projectId: project.id, type: 'island' };
-
-    shadowGenerator.addShadowCaster(base);
-    base.receiveShadows = true;
-
-    const marker = MeshBuilder.CreateCylinder(`marker-${project.id}`, {
-      height: 4,
-      diameterTop: 0.3,
-      diameterBottom: 1.2,
-      tessellation: 6,
-    }, scene);
-
-    const markerMat = new PBRMaterial(`markerMat-${project.id}`, scene);
-    markerMat.albedoColor = color;
-    markerMat.metallic = 0.3;
-    markerMat.roughness = 0.4;
-    markerMat.emissiveColor = color.scale(0.2);
-    marker.material = markerMat;
-    marker.position = new Vector3(project.position_x, terrainY + 4, project.position_z);
-    marker.metadata = { projectId: project.id, type: 'island' };
-
-    shadowGenerator.addShadowCaster(marker);
-    glowLayer.addIncludedOnlyMesh(marker);
-
-    const label = createFloatingLabel(project.name);
-    if (label) {
-      label.position = new Vector3(project.position_x, terrainY + 8, project.position_z);
-      label.billboardMode = Mesh.BILLBOARDMODE_ALL;
-    }
-
-    return { base, marker, label };
-  }
-
-  function createFloatingLabel(text: string): Mesh | null {
-    const texture = new DynamicTexture('labelTex', { width: 512, height: 128 }, scene);
-    const ctx = texture.getContext() as CanvasRenderingContext2D;
-
-    // Clear with transparency
-    ctx.clearRect(0, 0, 512, 128);
-
-    // White text with shadow for readability
-    ctx.font = 'bold 72px Inter, system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Drop shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetX = 2;
-    ctx.shadowOffsetY = 2;
-
-    // White text
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, 256, 64);
-
-    texture.update();
-    texture.hasAlpha = true;
-
-    const plane = MeshBuilder.CreatePlane('label', { width: 10, height: 2.5 }, scene);
-    const mat = new StandardMaterial('labelMat', scene);
-    mat.diffuseTexture = texture;
-    mat.emissiveTexture = texture;
-    mat.opacityTexture = texture;
-    mat.disableLighting = true;
-    mat.backFaceCulling = false;
-    plane.material = mat;
-
-    return plane;
-  }
-
-  function updateIslandPosition(projectId: number, x: number, z: number) {
-    const island = islandMeshes.get(projectId);
-    if (island) {
-      const terrainY = getTerrainHeight(x, z);
-      island.base.position.set(x, terrainY + 1, z);
-      island.marker.position.set(x, terrainY + 4, z);
-      if (island.label) {
-        island.label.position.set(x, terrainY + 8, z);
+      // Process any projects that were queued while loading
+      if (pendingProjects.length > 0) {
+        manager.updateSettlements(pendingProjects);
+        pendingProjects = [];
       }
-    }
-  }
+    })
+    .catch(err => {
+      console.error('[Scene] Failed to initialize settlement manager:', err);
+    });
 
   function updateProjects(projects: Project[]) {
-    const currentIds = new Set(projects.map(p => p.id));
-
-    islandMeshes.forEach((meshes, id) => {
-      if (!currentIds.has(id)) {
-        meshes.base.dispose();
-        meshes.marker.dispose();
-        meshes.label?.dispose();
-        islandMeshes.delete(id);
-      }
-    });
-
-    projects.forEach(project => {
-      if (!islandMeshes.has(project.id)) {
-        const meshes = createIsland(project);
-        islandMeshes.set(project.id, meshes);
-      } else {
-        updateIslandPosition(project.id, project.position_x, project.position_z);
-      }
-    });
+    if (settlementManager?.isReady()) {
+      settlementManager.updateSettlements(projects);
+    } else {
+      // Queue projects for when manager is ready
+      pendingProjects = projects;
+    }
   }
 
-  function setSelectedIsland(projectId: number | null) {
-    if (selectedIslandId !== null) {
-      const prev = islandMeshes.get(selectedIslandId);
-      if (prev) {
-        highlightLayer.removeMesh(prev.base);
-        highlightLayer.removeMesh(prev.marker);
-      }
-    }
-
-    selectedIslandId = projectId;
-
-    if (projectId !== null) {
-      const current = islandMeshes.get(projectId);
-      if (current) {
-        highlightLayer.addMesh(current.base, Color3.FromHexString('#d4a574'));
-        highlightLayer.addMesh(current.marker, Color3.FromHexString('#d4a574'));
-      }
-    }
+  function setSelectedSettlement(projectId: number | null) {
+    settlementManager?.setSelected(projectId);
   }
 
   function focusProject(project: Project) {
-    setSelectedIsland(project.id);
+    setSelectedSettlement(project.id);
 
     Animation.CreateAndStartAnimation(
       'cameraMove', camera, 'target', 60, 40,
@@ -1621,7 +1516,7 @@ export function createReachScene(
   }
 
   function resetCamera() {
-    setSelectedIsland(null);
+    setSelectedSettlement(null);
 
     Animation.CreateAndStartAnimation(
       'cameraReset', camera, 'target', 60, 40,
@@ -1639,52 +1534,38 @@ export function createReachScene(
   // ===========================================
   const placementMode = {
     active: false,
-    ghostMesh: null as Mesh | null,
-    ghostMarker: null as Mesh | null,
+    ghostNode: null as TransformNode | null,
     onPlace: null as ((x: number, z: number) => void) | null,
     onCancel: null as (() => void) | null,
     color: '#d4a574',
   };
 
-  function startPlacementMode(_projectName: string, color: string, onPlace: (x: number, z: number) => void, onCancel?: () => void) {
+  function startPlacementMode(_projectName: string, _color: string, onPlace: (x: number, z: number) => void, onCancel?: () => void) {
     cancelPlacementMode();
 
     placementMode.active = true;
     placementMode.onPlace = onPlace;
     placementMode.onCancel = onCancel || null;
-    placementMode.color = color;
 
-    const colorObj = Color3.FromHexString(color);
+    // Create ghost settlement preview (new camp)
+    if (settlementManager?.isReady()) {
+      placementMode.ghostNode = settlementManager.createGhostPreview(0);
+    } else {
+      // Fallback: simple marker if settlements not ready
+      const ghostMesh = MeshBuilder.CreateCylinder('ghost-marker', {
+        height: 4, diameterTop: 0.5, diameterBottom: 2, tessellation: 6,
+      }, scene);
+      const ghostMat = new StandardMaterial('ghostMat', scene);
+      ghostMat.diffuseColor = Color3.FromHexString('#d4a574');
+      ghostMat.alpha = 0.5;
+      ghostMat.emissiveColor = Color3.FromHexString('#d4a574').scale(0.3);
+      ghostMesh.material = ghostMat;
+      ghostMesh.isPickable = false;
 
-    // Ghost base
-    placementMode.ghostMesh = MeshBuilder.CreateCylinder('ghost-base', {
-      height: 2,
-      diameterTop: 8,
-      diameterBottom: 10,
-      tessellation: 6,
-    }, scene);
-    const ghostMat = new StandardMaterial('ghostMat', scene);
-    ghostMat.diffuseColor = colorObj;
-    ghostMat.alpha = 0.5;
-    ghostMat.emissiveColor = colorObj.scale(0.3);
-    placementMode.ghostMesh.material = ghostMat;
-    placementMode.ghostMesh.position.y = 1;
-    placementMode.ghostMesh.isPickable = false;
-
-    // Ghost marker
-    placementMode.ghostMarker = MeshBuilder.CreateCylinder('ghost-marker', {
-      height: 4,
-      diameterTop: 0.3,
-      diameterBottom: 1.2,
-      tessellation: 6,
-    }, scene);
-    const ghostMarkerMat = new StandardMaterial('ghostMarkerMat', scene);
-    ghostMarkerMat.diffuseColor = colorObj;
-    ghostMarkerMat.alpha = 0.5;
-    ghostMarkerMat.emissiveColor = colorObj.scale(0.5);
-    placementMode.ghostMarker.material = ghostMarkerMat;
-    placementMode.ghostMarker.position.y = 4;
-    placementMode.ghostMarker.isPickable = false;
+      const ghostNode = new TransformNode('ghost-fallback', scene);
+      ghostMesh.parent = ghostNode;
+      placementMode.ghostNode = ghostNode;
+    }
   }
 
   function cancelPlacementMode(notifyCallback = false) {
@@ -1694,10 +1575,12 @@ export function createReachScene(
     placementMode.active = false;
     placementMode.onPlace = null;
     placementMode.onCancel = null;
-    placementMode.ghostMesh?.dispose();
-    placementMode.ghostMesh = null;
-    placementMode.ghostMarker?.dispose();
-    placementMode.ghostMarker = null;
+
+    if (placementMode.ghostNode) {
+      placementMode.ghostNode.getChildMeshes().forEach(m => m.dispose());
+      placementMode.ghostNode.dispose();
+      placementMode.ghostNode = null;
+    }
   }
 
   // ===========================================
@@ -1706,61 +1589,45 @@ export function createReachScene(
   const moveMode = {
     active: false,
     projectId: null as number | null,
-    ghostMesh: null as Mesh | null,
-    ghostMarker: null as Mesh | null,
+    ghostNode: null as TransformNode | null,
     onMove: null as ((x: number, z: number) => void) | null,
     onCancel: null as (() => void) | null,
     color: '#d4a574',
   };
 
-  function startMoveMode(projectId: number, color: string, onMove: (x: number, z: number) => void, onCancel?: () => void) {
+  function startMoveMode(projectId: number, _color: string, onMove: (x: number, z: number) => void, onCancel?: () => void) {
     cancelMoveMode();
 
     moveMode.active = true;
     moveMode.projectId = projectId;
     moveMode.onMove = onMove;
     moveMode.onCancel = onCancel || null;
-    moveMode.color = color;
 
-    const colorObj = Color3.FromHexString(color);
+    // Hide the actual settlement temporarily
+    settlementManager?.setVisibility(projectId, 0.3);
 
-    // Hide the actual island temporarily
-    const island = islandMeshes.get(projectId);
-    if (island) {
-      island.base.visibility = 0.3;
-      island.marker.visibility = 0.3;
-      if (island.label) island.label.visibility = 0.3;
+    // Create ghost settlement preview
+    if (settlementManager?.isReady()) {
+      // Get the current project's task count for appropriate preview
+      const settlement = settlementManager.getSettlement(projectId);
+      const taskCount = settlement ? 5 : 0; // Default to small camp if not found
+      moveMode.ghostNode = settlementManager.createGhostPreview(taskCount);
+    } else {
+      // Fallback: simple marker
+      const ghostMesh = MeshBuilder.CreateCylinder('move-ghost-marker', {
+        height: 4, diameterTop: 0.5, diameterBottom: 2, tessellation: 6,
+      }, scene);
+      const ghostMat = new StandardMaterial('moveGhostMat', scene);
+      ghostMat.diffuseColor = Color3.FromHexString('#d4a574');
+      ghostMat.alpha = 0.7;
+      ghostMat.emissiveColor = Color3.FromHexString('#d4a574').scale(0.3);
+      ghostMesh.material = ghostMat;
+      ghostMesh.isPickable = false;
+
+      const ghostNode = new TransformNode('move-ghost-fallback', scene);
+      ghostMesh.parent = ghostNode;
+      moveMode.ghostNode = ghostNode;
     }
-
-    // Ghost base
-    moveMode.ghostMesh = MeshBuilder.CreateCylinder('move-ghost-base', {
-      height: 2,
-      diameterTop: 8,
-      diameterBottom: 10,
-      tessellation: 6,
-    }, scene);
-    const ghostMat = new StandardMaterial('moveGhostMat', scene);
-    ghostMat.diffuseColor = colorObj;
-    ghostMat.alpha = 0.7;
-    ghostMat.emissiveColor = colorObj.scale(0.3);
-    moveMode.ghostMesh.material = ghostMat;
-    moveMode.ghostMesh.position.y = 1;
-    moveMode.ghostMesh.isPickable = false;
-
-    // Ghost marker
-    moveMode.ghostMarker = MeshBuilder.CreateCylinder('move-ghost-marker', {
-      height: 4,
-      diameterTop: 0.3,
-      diameterBottom: 1.2,
-      tessellation: 6,
-    }, scene);
-    const ghostMarkerMat = new StandardMaterial('moveGhostMarkerMat', scene);
-    ghostMarkerMat.diffuseColor = colorObj;
-    ghostMarkerMat.alpha = 0.7;
-    ghostMarkerMat.emissiveColor = colorObj.scale(0.5);
-    moveMode.ghostMarker.material = ghostMarkerMat;
-    moveMode.ghostMarker.position.y = 4;
-    moveMode.ghostMarker.isPickable = false;
   }
 
   function cancelMoveMode(notifyCallback = false) {
@@ -1768,24 +1635,21 @@ export function createReachScene(
       moveMode.onCancel();
     }
 
-    // Restore island visibility
+    // Restore settlement visibility
     if (moveMode.projectId !== null) {
-      const island = islandMeshes.get(moveMode.projectId);
-      if (island) {
-        island.base.visibility = 1;
-        island.marker.visibility = 1;
-        if (island.label) island.label.visibility = 1;
-      }
+      settlementManager?.setVisibility(moveMode.projectId, 1);
     }
 
     moveMode.active = false;
     moveMode.projectId = null;
     moveMode.onMove = null;
     moveMode.onCancel = null;
-    moveMode.ghostMesh?.dispose();
-    moveMode.ghostMesh = null;
-    moveMode.ghostMarker?.dispose();
-    moveMode.ghostMarker = null;
+
+    if (moveMode.ghostNode) {
+      moveMode.ghostNode.getChildMeshes().forEach(m => m.dispose());
+      moveMode.ghostNode.dispose();
+      moveMode.ghostNode = null;
+    }
   }
 
   // ===========================================
@@ -1796,25 +1660,15 @@ export function createReachScene(
     const groundPos = pickResult?.pickedPoint;
 
     // Update ghost position in placement mode (with terrain height)
-    if (placementMode.active && groundPos) {
+    if (placementMode.active && groundPos && placementMode.ghostNode) {
       const terrainY = getTerrainHeight(groundPos.x, groundPos.z);
-      if (placementMode.ghostMesh) {
-        placementMode.ghostMesh.position.set(groundPos.x, terrainY + 1, groundPos.z);
-      }
-      if (placementMode.ghostMarker) {
-        placementMode.ghostMarker.position.set(groundPos.x, terrainY + 4, groundPos.z);
-      }
+      placementMode.ghostNode.position.set(groundPos.x, terrainY, groundPos.z);
     }
 
     // Update ghost position in move mode (with terrain height)
-    if (moveMode.active && groundPos) {
+    if (moveMode.active && groundPos && moveMode.ghostNode) {
       const terrainY = getTerrainHeight(groundPos.x, groundPos.z);
-      if (moveMode.ghostMesh) {
-        moveMode.ghostMesh.position.set(groundPos.x, terrainY + 1, groundPos.z);
-      }
-      if (moveMode.ghostMarker) {
-        moveMode.ghostMarker.position.set(groundPos.x, terrainY + 4, groundPos.z);
-      }
+      moveMode.ghostNode.position.set(groundPos.x, terrainY, groundPos.z);
     }
 
     // Handle pointer events
@@ -1833,9 +1687,9 @@ export function createReachScene(
         return;
       }
 
-      // Check if clicking on an island - just select it
+      // Check if clicking on a settlement - select it
       const pick = pointerInfo.pickInfo;
-      if (pick?.hit && pick.pickedMesh?.metadata?.type === 'island') {
+      if (pick?.hit && pick.pickedMesh?.metadata?.type === 'settlement') {
         const projectId = pick.pickedMesh.metadata.projectId;
         onProjectClick(projectId);
       }
@@ -1854,6 +1708,7 @@ export function createReachScene(
     dispose: () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      settlementManager?.dispose();
       pipeline.dispose();
       glowLayer.dispose();
       highlightLayer.dispose();
