@@ -37,6 +37,7 @@ import { createCloudShadows } from './cloudShadows';
 import { createLake } from './lake';
 import { createSettlementManager, type SettlementManager } from './settlements';
 import { createBirdSystem, type BirdSystem } from './birds';
+import { createSheepSystem, type SheepSystem } from './sheep';
 
 export interface ReachScene {
   scene: Scene;
@@ -1502,7 +1503,28 @@ export function createReachScene(
       console.error('[Scene] Failed to initialize bird system:', err);
     });
 
-  // Update lake and birds each frame
+  // ===========================================
+  // AMBIENT SHEEP
+  // ===========================================
+  let sheepSystem: SheepSystem | null = null;
+
+  // Terrain sampler for sheep (includes forest density for avoidance)
+  const sheepTerrainSampler = {
+    getHeight: (x: number, z: number) => getTerrainHeight(x, z),
+    getForestDensity: (x: number, z: number) => sampleBiome(x, z).forestDensity,
+  };
+
+  // Initialize sheep asynchronously
+  createSheepSystem(scene, lakeConfig, sheepTerrainSampler, shadowGenerator)
+    .then(system => {
+      sheepSystem = system;
+      console.log('[Scene] Sheep system ready');
+    })
+    .catch(err => {
+      console.error('[Scene] Failed to initialize sheep system:', err);
+    });
+
+  // Update lake, birds, and sheep each frame
   let lastTime = performance.now();
   scene.onBeforeRenderObservable.add(() => {
     const currentTime = performance.now();
@@ -1510,6 +1532,7 @@ export function createReachScene(
     lastTime = currentTime;
     lakeSystem.update(deltaTime);
     birdSystem?.update(deltaTime);
+    sheepSystem?.update(deltaTime);
     settlementManager?.update(deltaTime);
   });
 
@@ -1764,6 +1787,7 @@ export function createReachScene(
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       birdSystem?.dispose();
+      sheepSystem?.dispose();
       settlementManager?.dispose();
       pipeline.dispose();
       glowLayer.dispose();

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Scene } from '@babylonjs/core';
 
+const STORAGE_KEY = 'debug-overlay-expanded';
+
 interface DebugMetrics {
   fps: number;
   frameTime: number;
@@ -15,6 +17,10 @@ interface DebugOverlayProps {
 }
 
 export function DebugOverlay({ scene }: DebugOverlayProps) {
+  const [isExpanded, setIsExpanded] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === null ? true : stored === 'true';
+  });
   const [metrics, setMetrics] = useState<DebugMetrics>({
     fps: 0,
     frameTime: 0,
@@ -23,6 +29,12 @@ export function DebugOverlay({ scene }: DebugOverlayProps) {
     totalMeshes: 0,
     totalMaterials: 0,
   });
+
+  const toggleExpanded = () => {
+    const newValue = !isExpanded;
+    setIsExpanded(newValue);
+    localStorage.setItem(STORAGE_KEY, String(newValue));
+  };
 
   useEffect(() => {
     if (!scene) return;
@@ -58,36 +70,49 @@ export function DebugOverlay({ scene }: DebugOverlayProps) {
   if (!scene) return null;
 
   return (
-    <div className="fixed top-4 left-4 z-50 bg-black/70 text-white font-mono text-xs p-3 rounded-lg shadow-lg min-w-[160px]">
-      <div className="text-green-400 font-bold mb-2">Debug Stats</div>
-      <div className="space-y-1">
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">FPS:</span>
+    <div className="fixed top-4 left-4 z-50 bg-black/70 text-white font-mono text-xs rounded-lg shadow-lg">
+      <button
+        onClick={toggleExpanded}
+        className="flex items-center gap-2 px-3 py-2 w-full text-left hover:bg-white/10 rounded-t-lg transition-colors"
+      >
+        <span className="text-[10px]">{isExpanded ? '▼' : '▶'}</span>
+        <span className="text-green-400 font-bold">Debug</span>
+        {!isExpanded && (
           <span className={metrics.fps < 30 ? 'text-red-400' : metrics.fps < 50 ? 'text-yellow-400' : 'text-green-400'}>
-            {metrics.fps}
+            {metrics.fps} FPS
           </span>
+        )}
+      </button>
+      {isExpanded && (
+        <div className="px-3 pb-3 pt-1 space-y-1 min-w-[160px]">
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">FPS:</span>
+            <span className={metrics.fps < 30 ? 'text-red-400' : metrics.fps < 50 ? 'text-yellow-400' : 'text-green-400'}>
+              {metrics.fps}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">Frame:</span>
+            <span>{metrics.frameTime}ms</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">Active:</span>
+            <span>{metrics.activeMeshes}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">Meshes:</span>
+            <span>{metrics.totalMeshes}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">Vertices:</span>
+            <span>{(metrics.totalVertices / 1000).toFixed(1)}k</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-400">Materials:</span>
+            <span>{metrics.totalMaterials}</span>
+          </div>
         </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">Frame:</span>
-          <span>{metrics.frameTime}ms</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">Active:</span>
-          <span>{metrics.activeMeshes}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">Meshes:</span>
-          <span>{metrics.totalMeshes}</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">Vertices:</span>
-          <span>{(metrics.totalVertices / 1000).toFixed(1)}k</span>
-        </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-gray-400">Materials:</span>
-          <span>{metrics.totalMaterials}</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
