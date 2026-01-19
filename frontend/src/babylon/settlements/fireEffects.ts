@@ -91,6 +91,7 @@ export interface FireEffect {
   smokeSystem: ParticleSystem | null;
   light: PointLight;
   baseIntensity: number;
+  intensityMultiplier: number;
   update: (time: number) => void;
   dispose: () => void;
 }
@@ -213,35 +214,38 @@ export function createCampfireEffect(
 
   const baseIntensity = light.intensity;
 
-  // Flicker update function
-  function update(time: number) {
-    // Multi-frequency flicker for realistic fire
-    const flicker1 = Math.sin(time * 15) * 0.1;
-    const flicker2 = Math.sin(time * 23) * 0.08;
-    const flicker3 = Math.sin(time * 37) * 0.05;
-    const randomFlicker = (Math.random() - 0.5) * 0.15;
-
-    light.intensity = baseIntensity + flicker1 + flicker2 + flicker3 + randomFlicker;
-  }
-
-  function dispose() {
-    particles.stop();
-    particles.dispose();
-    smoke.stop();
-    smoke.dispose();
-    light.dispose();
-    emitter.dispose();
-    smokeEmitter.dispose();
-  }
-
-  return {
+  // Create the fire effect object so we can reference intensityMultiplier in update
+  const fireEffect: FireEffect = {
     particleSystem: particles,
     smokeSystem: smoke,
     light,
     baseIntensity,
-    update,
-    dispose,
+    intensityMultiplier: 1.0, // Can be changed externally for night mode
+
+    // Flicker update function
+    update(time: number) {
+      // Multi-frequency flicker for realistic fire (slowed down)
+      const flicker1 = Math.sin(time * 8) * 0.1;
+      const flicker2 = Math.sin(time * 12) * 0.08;
+      const flicker3 = Math.sin(time * 19) * 0.05;
+      const randomFlicker = (Math.random() - 0.5) * 0.1;
+
+      const flickerAmount = flicker1 + flicker2 + flicker3 + randomFlicker;
+      light.intensity = (baseIntensity + flickerAmount) * this.intensityMultiplier;
+    },
+
+    dispose() {
+      particles.stop();
+      particles.dispose();
+      smoke.stop();
+      smoke.dispose();
+      light.dispose();
+      emitter.dispose();
+      smokeEmitter.dispose();
+    },
   };
+
+  return fireEffect;
 }
 
 // ============================================
@@ -319,6 +323,7 @@ export function createTorchEffect(
     smokeSystem: null, // No smoke for torch
     light: null as unknown as PointLight, // No light for torch
     baseIntensity: 0,
+    intensityMultiplier: 1.0,
     update,
     dispose,
   };
@@ -361,6 +366,15 @@ export class FireManager {
     if (index !== -1) {
       this.fires.splice(index, 1);
       fire.dispose();
+    }
+  }
+
+  /**
+   * Set intensity multiplier for all campfire lights (for night mode)
+   */
+  setIntensityMultiplier(multiplier: number): void {
+    for (const fire of this.fires) {
+      fire.intensityMultiplier = multiplier;
     }
   }
 

@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useProjectStore, type SortOption } from '../stores/projectStore';
 import { Modal, ConfirmModal } from './Modal';
 import { PriorityDropdown } from './Dropdown';
 import { DatePicker } from './DatePicker';
-import type { Task } from '../api/client';
+import type { Task, Project } from '../api/client';
 
 export function TaskPanel() {
   const {
@@ -15,6 +15,8 @@ export function TaskPanel() {
     updateTaskStatus,
     updateTask,
     deleteTask,
+    updateProjectName,
+    deleteProject,
     moveMode,
     startMoveMode,
     cancelMoveMode,
@@ -25,8 +27,49 @@ export function TaskPanel() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [tempName, setTempName] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
+
+  // Focus input when editing name
+  useEffect(() => {
+    if (editingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [editingName]);
+
+  const startEditingName = () => {
+    if (selectedProject) {
+      setTempName(selectedProject.name);
+      setEditingName(true);
+    }
+  };
+
+  const saveName = async () => {
+    if (selectedProject && tempName.trim() && tempName.trim() !== selectedProject.name) {
+      await updateProjectName(selectedProject.id, tempName.trim());
+    }
+    setEditingName(false);
+  };
+
+  const cancelEditingName = () => {
+    setEditingName(false);
+    setTempName('');
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveName();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEditingName();
+    }
+  };
 
   const sortedTasks = useMemo(() => {
     const sorted = [...tasks];
@@ -96,17 +139,35 @@ export function TaskPanel() {
         {/* Header */}
         <div className="p-5 border-b border-[#e8e4df]/60">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <div
-                className="w-4 h-4 rounded-full ring-2 ring-white shadow-sm"
+                className="w-4 h-4 rounded-full ring-2 ring-white shadow-sm flex-shrink-0"
                 style={{ backgroundColor: selectedProject.color }}
               />
-              <div>
-                <h2 className="text-lg font-semibold text-[#1a1a1a] tracking-tight">{selectedProject.name}</h2>
-                <p className="text-xs text-[#8a857f]">{tasks.length} tasks</p>
+              <div className="min-w-0 flex-1">
+                {editingName ? (
+                  <input
+                    ref={nameInputRef}
+                    type="text"
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    onKeyDown={handleNameKeyDown}
+                    onBlur={saveName}
+                    className="w-full text-lg font-semibold text-[#1a1a1a] tracking-tight bg-[#f8f6f4] rounded-lg px-2 py-0.5 -ml-2 border-0 focus:outline-none focus:ring-2 focus:ring-[#d4a574]/30"
+                  />
+                ) : (
+                  <h2
+                    onClick={startEditingName}
+                    className="text-lg font-semibold text-[#1a1a1a] tracking-tight cursor-pointer hover:bg-[#f8f6f4] rounded-lg px-2 py-0.5 -ml-2 transition-colors truncate"
+                    title="Click to edit name"
+                  >
+                    {selectedProject.name}
+                  </h2>
+                )}
+                <p className="text-xs text-[#8a857f] ml-0.5">{tasks.length} tasks</p>
               </div>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 flex-shrink-0">
               {moveMode.active ? (
                 <button
                   onClick={cancelMoveMode}
@@ -118,15 +179,26 @@ export function TaskPanel() {
                   Cancel Move
                 </button>
               ) : (
-                <button
-                  onClick={startMoveMode}
-                  className="w-8 h-8 rounded-lg hover:bg-[#f0ebe5] flex items-center justify-center text-[#8a857f] hover:text-[#1a1a1a] transition-all"
-                  title="Move project"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                  </svg>
-                </button>
+                <>
+                  <button
+                    onClick={startMoveMode}
+                    className="w-8 h-8 rounded-lg hover:bg-[#f0ebe5] flex items-center justify-center text-[#8a857f] hover:text-[#1a1a1a] transition-all"
+                    title="Move project"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setDeletingProject(selectedProject)}
+                    className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-[#8a857f] hover:text-red-500 transition-all"
+                    title="Delete project"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </>
               )}
               <button
                 onClick={() => selectProject(null)}
@@ -336,7 +408,7 @@ export function TaskPanel() {
         />
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Task Confirmation Modal */}
       <ConfirmModal
         isOpen={!!deletingTask}
         onClose={() => setDeletingTask(null)}
@@ -344,6 +416,17 @@ export function TaskPanel() {
         title="Delete Task"
         message={`Are you sure you want to delete "${deletingTask?.title}"? This action cannot be undone.`}
         confirmText="Delete"
+        confirmVariant="danger"
+      />
+
+      {/* Delete Project Confirmation Modal */}
+      <ConfirmModal
+        isOpen={!!deletingProject}
+        onClose={() => setDeletingProject(null)}
+        onConfirm={() => deletingProject && deleteProject(deletingProject.id)}
+        title="Delete Project"
+        message={`Are you sure you want to delete "${deletingProject?.name}"? This will also delete all ${deletingProject?.task_count || 0} tasks in this project. This action cannot be undone.`}
+        confirmText="Delete Project"
         confirmVariant="danger"
       />
     </>

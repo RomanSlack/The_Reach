@@ -565,6 +565,13 @@ export class SettlementManager {
     this.fireManager.update(deltaTime);
   }
 
+  /**
+   * Set fire intensity multiplier (for night mode)
+   */
+  setFireIntensityMultiplier(multiplier: number): void {
+    this.fireManager.setIntensityMultiplier(multiplier);
+  }
+
   // ==========================================
   // CLEANUP
   // ==========================================

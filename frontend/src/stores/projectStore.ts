@@ -29,6 +29,8 @@ interface ProjectStore {
   cancelMoveMode: () => void;
   confirmMove: (x: number, z: number) => Promise<void>;
   moveProject: (id: number, x: number, z: number) => Promise<void>;
+  updateProjectName: (id: number, name: string) => Promise<void>;
+  deleteProject: (id: number) => Promise<void>;
   addTask: (title: string, description?: string | null, priority?: number, deadline?: string | null) => Promise<void>;
   updateTaskStatus: (taskId: number, status: string) => Promise<void>;
   updateTask: (taskId: number, updates: { title?: string; description?: string | null; priority?: number; deadline?: string | null }) => Promise<void>;
@@ -168,6 +170,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       projects: get().projects.map(p =>
         p.id === id ? { ...p, position_x: x, position_z: z } : p
       ),
+    });
+  },
+
+  updateProjectName: async (id, name) => {
+    const project = get().projects.find(p => p.id === id);
+    if (!project) return;
+
+    await api.updateProject(id, {
+      name,
+      description: project.description,
+      color: project.color,
+      position_x: project.position_x,
+      position_z: project.position_z,
+    });
+
+    set({
+      projects: get().projects.map(p =>
+        p.id === id ? { ...p, name } : p
+      ),
+    });
+  },
+
+  deleteProject: async (id) => {
+    await api.deleteProject(id);
+    const { selectedProjectId } = get();
+    set({
+      projects: get().projects.filter(p => p.id !== id),
+      // Clear selection and tasks if deleting the selected project
+      selectedProjectId: selectedProjectId === id ? null : selectedProjectId,
+      tasks: selectedProjectId === id ? [] : get().tasks,
     });
   },
 

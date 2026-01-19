@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { createEngine } from '../babylon/engine';
 import { createReachScene } from '../babylon/scene';
 import type { ReachScene } from '../babylon/scene';
 import { useProjectStore } from '../stores/projectStore';
 import type { Engine, Scene } from '@babylonjs/core';
 import { DebugOverlay } from './DebugOverlay';
+import { DayNightToggle } from './DayNightToggle';
 
 export function BabylonCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -157,6 +158,11 @@ export function BabylonCanvas() {
     }
   }, [moveMode.active, moveMode.projectId, projects, confirmMove, cancelMoveMode]);
 
+  // Handle day/night toggle
+  const handleNightModeToggle = useCallback((isNight: boolean) => {
+    sceneRef.current?.setNightMode(isNight);
+  }, []);
+
   return (
     <>
       <canvas
@@ -214,6 +220,9 @@ export function BabylonCanvas() {
 
       {/* Debug Overlay - FPS and metrics */}
       {!loading && <DebugOverlay scene={debugScene} />}
+
+      {/* Day/Night Toggle */}
+      {!loading && <DayNightToggle onToggle={handleNightModeToggle} />}
     </>
   );
 }

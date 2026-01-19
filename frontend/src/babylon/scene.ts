@@ -49,6 +49,7 @@ export interface ReachScene {
   cancelPlacementMode: () => void;
   startMoveMode: (projectId: number, color: string, onMove: (x: number, z: number) => void, onCancel?: () => void) => void;
   cancelMoveMode: () => void;
+  setNightMode: (enabled: boolean) => void;
   dispose: () => void;
 }
 
@@ -800,8 +801,45 @@ export function createReachScene(
   glowLayer.customEmissiveColorSelector = (mesh, _subMesh, _material, result) => {
     if (mesh === sun) {
       result.set(1, 0.9, 0.5, 1);
+    } else if (mesh.name.startsWith('star_')) {
+      // Bright white glow for stars (HDR values for strong bloom)
+      result.set(3, 3, 3, 1);
     }
   };
+
+  // ===========================================
+  // STARS (visible at night)
+  // ===========================================
+  const stars: Mesh[] = [];
+  const starMat = new StandardMaterial('starMat', scene);
+  starMat.emissiveColor = new Color3(3, 3, 3); // HDR bright white (values > 1 for bloom)
+  starMat.disableLighting = true;
+  starMat.alpha = 0; // Hidden during day
+
+  // Create stars distributed on a sphere
+  const starCount = 300;
+  const starRadius = 480; // Inside the sky sphere (sky is 500 radius)
+  for (let i = 0; i < starCount; i++) {
+    // Random position on sphere using spherical coordinates
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    // Only place stars in upper hemisphere (above horizon)
+    if (phi > Math.PI * 0.55) continue;
+
+    const x = starRadius * Math.sin(phi) * Math.cos(theta);
+    const y = starRadius * Math.cos(phi);
+    const z = starRadius * Math.sin(phi) * Math.sin(theta);
+
+    // Bigger stars - visible from far away
+    const starSize = 1.5 + Math.random() * 2.5; // 1.5 to 4.0 diameter
+    const star = MeshBuilder.CreateSphere(`star_${i}`, { diameter: starSize, segments: 4 }, scene);
+    star.position = new Vector3(x, y, z);
+    star.material = starMat;
+    stars.push(star);
+
+    // Add to glow layer for bright effect
+    glowLayer.addIncludedOnlyMesh(star);
+  }
 
   // ===========================================
   // GOD RAYS (Volumetric Light Scattering)
@@ -1785,6 +1823,268 @@ export function createReachScene(
     }
   });
 
+  // ===========================================
+  // DAY/NIGHT MODE
+  // ===========================================
+  let isNightMode = false;
+  let nightTransitionAnimation: Animation | null = null;
+
+  // Transition duration in milliseconds
+  const TRANSITION_DURATION = 2000;
+
+  function setNightMode(enabled: boolean) {
+    if (isNightMode === enabled) return;
+    isNightMode = enabled;
+
+    const fps = 60;
+    const totalFrames = (TRANSITION_DURATION / 1000) * fps;
+
+    // Helper to animate a value
+    const animateValue = (
+      target: any,
+      property: string,
+      startValue: number,
+      endValue: number,
+      animName: string
+    ) => {
+      const anim = new Animation(
+        animName,
+        property,
+        fps,
+        Animation.ANIMATIONTYPE_FLOAT,
+        Animation.ANIMATIONLOOPMODE_CONSTANT
+      );
+      anim.setKeys([
+        { frame: 0, value: startValue },
+        { frame: totalFrames, value: endValue },
+      ]);
+      scene.beginDirectAnimation(target, [anim], 0, totalFrames, false);
+    };
+
+    // Helper to animate Color3
+    const animateColor3 = (
+      target: any,
+      property: string,
+      startColor: Color3,
+      endColor: Color3,
+      animName: string
+    ) => {
+      const anim = new Animation(
+        animName,
+        property,
+        fps,
+        Animation.ANIMATIONTYPE_COLOR3,
+        Animation.ANIMATIONLOOPMODE_CONSTANT
+      );
+      anim.setKeys([
+        { frame: 0, value: startColor },
+        { frame: totalFrames, value: endColor },
+      ]);
+      scene.beginDirectAnimation(target, [anim], 0, totalFrames, false);
+    };
+
+    // Helper to animate Color4
+    const animateColor4 = (
+      target: any,
+      property: string,
+      startColor: Color4,
+      endColor: Color4,
+      animName: string
+    ) => {
+      const anim = new Animation(
+        animName,
+        property,
+        fps,
+        Animation.ANIMATIONTYPE_COLOR4,
+        Animation.ANIMATIONLOOPMODE_CONSTANT
+      );
+      anim.setKeys([
+        { frame: 0, value: startColor },
+        { frame: totalFrames, value: endColor },
+      ]);
+      scene.beginDirectAnimation(target, [anim], 0, totalFrames, false);
+    };
+
+    // Day and night presets
+    const day = {
+      clearColor: new Color4(0.3, 0.55, 0.85, 1),
+      ambientIntensity: 0.4,
+      ambientDiffuse: new Color3(0.7, 0.8, 1.0),
+      ambientGround: new Color3(0.25, 0.2, 0.15),
+      sunIntensity: 1.8,
+      sunDiffuse: new Color3(1, 0.95, 0.8),
+      sunSpecular: new Color3(1, 0.98, 0.9),
+      shadowDarkness: 0.35,
+      fogColor: new Color3(0.78, 0.85, 0.92),
+      sunEmissive: new Color3(1, 0.95, 0.7),
+      sunGlow: new Color4(1, 0.9, 0.5, 1),
+      godRaysExposure: 0.3,
+      godRaysWeight: 0.5,
+      cloudEmissive: new Color3(0.9, 0.92, 0.98),
+      exposure: 1.1,
+      contrast: 1.15,
+      saturation: 20,
+    };
+
+    const night = {
+      clearColor: new Color4(0.02, 0.03, 0.08, 1),
+      ambientIntensity: 0.12,
+      ambientDiffuse: new Color3(0.15, 0.18, 0.35),
+      ambientGround: new Color3(0.05, 0.05, 0.08),
+      sunIntensity: 0.25,
+      sunDiffuse: new Color3(0.6, 0.7, 0.9),
+      sunSpecular: new Color3(0.5, 0.6, 0.8),
+      shadowDarkness: 0.6,
+      fogColor: new Color3(0.05, 0.07, 0.12),
+      sunEmissive: new Color3(0.9, 0.92, 0.98),
+      sunGlow: new Color4(0.7, 0.75, 0.9, 1),
+      godRaysExposure: 0.12,
+      godRaysWeight: 0.25,
+      cloudEmissive: new Color3(0.15, 0.17, 0.25),
+      exposure: 0.85,
+      contrast: 1.2,
+      saturation: -10,
+    };
+
+    const from = enabled ? day : night;
+    const to = enabled ? night : day;
+
+    // Animate scene clear color
+    animateColor4(scene, 'clearColor', from.clearColor, to.clearColor, 'clearColorAnim');
+
+    // Animate ambient light
+    animateValue(ambientLight, 'intensity', from.ambientIntensity, to.ambientIntensity, 'ambientIntensityAnim');
+    animateColor3(ambientLight, 'diffuse', from.ambientDiffuse, to.ambientDiffuse, 'ambientDiffuseAnim');
+    animateColor3(ambientLight, 'groundColor', from.ambientGround, to.ambientGround, 'ambientGroundAnim');
+
+    // Animate sun/moon light
+    animateValue(sunLight, 'intensity', from.sunIntensity, to.sunIntensity, 'sunIntensityAnim');
+    animateColor3(sunLight, 'diffuse', from.sunDiffuse, to.sunDiffuse, 'sunDiffuseAnim');
+    animateColor3(sunLight, 'specular', from.sunSpecular, to.sunSpecular, 'sunSpecularAnim');
+
+    // Animate shadow darkness
+    animateValue(shadowGenerator, '_darkness', from.shadowDarkness, to.shadowDarkness, 'shadowDarknessAnim');
+
+    // Animate fog
+    animateColor3(scene, 'fogColor', from.fogColor, to.fogColor, 'fogColorAnim');
+
+    // Animate sun mesh (becomes moon)
+    animateColor3(sunMat, 'emissiveColor', from.sunEmissive, to.sunEmissive, 'sunEmissiveAnim');
+
+    // Update glow layer for sun/moon
+    glowLayer.customEmissiveColorSelector = (mesh, _subMesh, _material, result) => {
+      if (mesh === sun) {
+        const t = to.sunGlow;
+        result.set(t.r, t.g, t.b, t.a);
+      }
+    };
+
+    // Animate god rays
+    animateValue(godRays, 'exposure', from.godRaysExposure, to.godRaysExposure, 'godRaysExposureAnim');
+    animateValue(godRays, 'weight', from.godRaysWeight, to.godRaysWeight, 'godRaysWeightAnim');
+
+    // Animate cloud material
+    animateColor3(cloudMat, 'emissiveColor', from.cloudEmissive, to.cloudEmissive, 'cloudEmissiveAnim');
+
+    // Animate sky material emissive (dims the whole sky)
+    const skyDayEmissive = new Color3(1, 1, 1);
+    const skyNightEmissive = new Color3(0.08, 0.08, 0.12); // Very dim at night
+    animateColor3(
+      skyMat,
+      'emissiveColor',
+      enabled ? skyDayEmissive : skyNightEmissive,
+      enabled ? skyNightEmissive : skyDayEmissive,
+      'skyEmissiveAnim'
+    );
+
+    // Animate post-processing
+    animateValue(pipeline.imageProcessing, 'exposure', from.exposure, to.exposure, 'exposureAnim');
+    animateValue(pipeline.imageProcessing, 'contrast', from.contrast, to.contrast, 'contrastAnim');
+
+    // Color curves saturation (set directly with timeout for smooth feel)
+    const startSat = from.saturation;
+    const endSat = to.saturation;
+    const satStep = (endSat - startSat) / totalFrames;
+    let currentFrame = 0;
+    const satInterval = setInterval(() => {
+      currentFrame++;
+      curves.globalSaturation = startSat + satStep * currentFrame;
+      if (currentFrame >= totalFrames) {
+        clearInterval(satInterval);
+        curves.globalSaturation = endSat;
+      }
+    }, 1000 / fps);
+
+    // Animate sky gradient (recreate texture over time)
+    const skyGradientColors = {
+      day: ['#1a5fc4', '#2e7ad9', '#4a9ae8', '#5aacf0'],
+      night: ['#020308', '#030510', '#050815', '#080c1a'], // Much darker night sky
+    };
+    const fromColors = enabled ? skyGradientColors.day : skyGradientColors.night;
+    const toColors = enabled ? skyGradientColors.night : skyGradientColors.day;
+
+    // Lerp hex colors
+    const lerpHex = (a: string, b: string, t: number): string => {
+      const parseHex = (hex: string) => ({
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+      });
+      const ca = parseHex(a);
+      const cb = parseHex(b);
+      const r = Math.round(ca.r + (cb.r - ca.r) * t);
+      const g = Math.round(ca.g + (cb.g - ca.g) * t);
+      const bl = Math.round(ca.b + (cb.b - ca.b) * t);
+      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${bl.toString(16).padStart(2, '0')}`;
+    };
+
+    let skyFrame = 0;
+    const skyInterval = setInterval(() => {
+      skyFrame++;
+      const t = skyFrame / totalFrames;
+
+      const ctx = skyTexture.getContext();
+      const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+      gradient.addColorStop(0, lerpHex(fromColors[0], toColors[0], t));
+      gradient.addColorStop(0.4, lerpHex(fromColors[1], toColors[1], t));
+      gradient.addColorStop(0.7, lerpHex(fromColors[2], toColors[2], t));
+      gradient.addColorStop(1, lerpHex(fromColors[3], toColors[3], t));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 1, 256);
+      skyTexture.update();
+
+      if (skyFrame >= totalFrames) {
+        clearInterval(skyInterval);
+      }
+    }, 1000 / fps);
+
+    // Animate stars visibility
+    const starFromAlpha = enabled ? 0 : 1;
+    const starToAlpha = enabled ? 1 : 0;
+    animateValue(starMat, 'alpha', starFromAlpha, starToAlpha, 'starAlphaAnim');
+
+    // =====================================================
+    // CAMPFIRE LIGHT BRIGHTNESS - Tweak this multiplier!
+    // =====================================================
+    const CAMPFIRE_NIGHT_MULTIPLIER = 5.0; // <-- CHANGE THIS VALUE TO ADJUST NIGHT BRIGHTNESS
+    // =====================================================
+
+    // Animate fire intensity multiplier through settlementManager
+    const fromMultiplier = enabled ? 1.0 : CAMPFIRE_NIGHT_MULTIPLIER;
+    const toMultiplier = enabled ? CAMPFIRE_NIGHT_MULTIPLIER : 1.0;
+    const multiplierStep = (toMultiplier - fromMultiplier) / totalFrames;
+    let fireFrame = 0;
+    const fireInterval = setInterval(() => {
+      fireFrame++;
+      const currentMultiplier = fromMultiplier + multiplierStep * fireFrame;
+      settlementManager?.setFireIntensityMultiplier(currentMultiplier);
+      if (fireFrame >= totalFrames) {
+        clearInterval(fireInterval);
+        settlementManager?.setFireIntensityMultiplier(toMultiplier);
+      }
+    }, 1000 / fps);
+  }
+
   return {
     scene,
     updateProjects,
@@ -1794,6 +2094,7 @@ export function createReachScene(
     cancelPlacementMode,
     startMoveMode,
     cancelMoveMode,
+    setNightMode,
     dispose: () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
