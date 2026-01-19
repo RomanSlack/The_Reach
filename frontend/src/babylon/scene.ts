@@ -1821,6 +1821,16 @@ export function createReachScene(
         // Clicked on ground (not a settlement) - deselect
         onProjectClick(null);
       }
+
+      // Check if clicking on the lake - spawn ripple, scare birds, attract fish
+      const lakePick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => mesh === lakeSystem.mesh);
+      if (lakePick?.hit && lakePick.pickedPoint) {
+        const clickX = lakePick.pickedPoint.x;
+        const clickZ = lakePick.pickedPoint.z;
+        lakeSystem.spawnRippleAt(clickX, clickZ);
+        birdSystem?.scareNearby(clickX, clickZ, 15); // Scare birds within 15 units
+        fishSystem?.attractToPoint(clickX, clickZ, 25); // Attract fish within 25 units
+      }
     }
   });
 

@@ -4,9 +4,12 @@ import {
   MeshBuilder,
   Mesh,
   Color3,
+  Color4,
   Texture,
   DynamicTexture,
   StandardMaterial,
+  ParticleSystem,
+  TransformNode,
 } from '@babylonjs/core';
 import { getWaterLevel, type LakeConfig } from './terrain';
 
@@ -62,6 +65,7 @@ export interface LakeSystem {
   mesh: Mesh;
   material: StandardMaterial;
   update: (deltaTime: number) => void;
+  spawnRippleAt: (x: number, z: number) => void;
   dispose: () => void;
 }
 
@@ -174,7 +178,7 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     return 15 + Math.random() * 24; // 15-39 seconds (3x less frequent)
   }
 
-  function spawnRipple() {
+  function spawnRipple(atX?: number, atZ?: number) {
     if (activeRippleMeshes.length >= maxRipples) {
       const oldest = activeRippleMeshes.shift();
       if (oldest) {
@@ -183,11 +187,17 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
       }
     }
 
-    // Random position within lake
-    const angle = Math.random() * Math.PI * 2;
-    const dist = 5 + Math.random() * (lakeRadius * 0.5);
-    const x = lakeConfig.centerX + Math.cos(angle) * dist;
-    const z = lakeConfig.centerZ + Math.sin(angle) * dist;
+    // Use provided position or random position within lake
+    let x: number, z: number;
+    if (atX !== undefined && atZ !== undefined) {
+      x = atX;
+      z = atZ;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 5 + Math.random() * (lakeRadius * 0.5);
+      x = lakeConfig.centerX + Math.cos(angle) * dist;
+      z = lakeConfig.centerZ + Math.sin(angle) * dist;
+    }
 
     // Create outer ring (flat torus lying on water)
     const outerRing = MeshBuilder.CreateTorus('rippleOuter', {
@@ -310,6 +320,85 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     }
   }
 
+  // ===========================================
+  // SPLASH PARTICLE EFFECT
+  // ===========================================
+  // Create a small splash particle texture (soft blue circle)
+  const splashTexture = new DynamicTexture('splashParticleTex', 32, scene, false);
+  const splashCtx = splashTexture.getContext() as CanvasRenderingContext2D;
+  const splashGradient = splashCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  splashGradient.addColorStop(0, 'rgba(150, 200, 255, 1)');
+  splashGradient.addColorStop(0.5, 'rgba(100, 170, 230, 0.7)');
+  splashGradient.addColorStop(1, 'rgba(80, 150, 220, 0)');
+  splashCtx.fillStyle = splashGradient;
+  splashCtx.fillRect(0, 0, 32, 32);
+  splashTexture.update();
+
+  function spawnSplash(x: number, z: number) {
+    // Create emitter at click position (slightly above water)
+    const emitter = new TransformNode('splashEmitter', scene);
+    emitter.position = new Vector3(x, waterLevel + 0.1, z);
+
+    const splash = new ParticleSystem('splash_' + Date.now(), 40, scene);
+    splash.particleTexture = splashTexture;
+    splash.emitter = emitter;
+
+    // Tight emission at water surface
+    splash.minEmitBox = new Vector3(-0.2, 0, -0.2);
+    splash.maxEmitBox = new Vector3(0.2, 0.1, 0.2);
+
+    // Light blue water colors (more opaque)
+    splash.color1 = new Color4(0.7, 0.85, 1.0, 1.0);
+    splash.color2 = new Color4(0.6, 0.8, 0.95, 0.9);
+    splash.colorDead = new Color4(0.5, 0.7, 0.9, 0);
+
+    // Bigger particles
+    splash.minSize = 0.15;
+    splash.maxSize = 0.35;
+
+    // Short lifetime
+    splash.minLifeTime = 0.4;
+    splash.maxLifeTime = 0.8;
+
+    // Burst upward and outward
+    splash.direction1 = new Vector3(-0.8, 2, -0.8);
+    splash.direction2 = new Vector3(0.8, 4, 0.8);
+
+    // Stronger burst speed
+    splash.minEmitPower = 1.5;
+    splash.maxEmitPower = 3;
+    splash.updateSpeed = 0.01;
+
+    // Gravity pulls droplets back down
+    splash.gravity = new Vector3(0, -6, 0);
+
+    // Additive blending for more visibility
+    splash.blendMode = ParticleSystem.BLENDMODE_ADD;
+
+    // Emit a quick burst
+    splash.emitRate = 80;
+
+    splash.start();
+
+    // Stop emitting after a short burst, then clean up after particles fade
+    setTimeout(() => {
+      splash.stop();
+    }, 100);
+
+    setTimeout(() => {
+      splash.dispose();
+      emitter.dispose();
+    }, 1000);
+  }
+
+  function spawnRippleAt(x: number, z: number) {
+    spawnRipple(x, z);
+    spawnSplash(x, z);
+  }
+
+  // ===========================================
+  // DISPOSE
+  // ===========================================
   function dispose() {
     for (const ripple of activeRippleMeshes) {
       ripple.outerRing.material?.dispose();
@@ -318,6 +407,7 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
       ripple.innerRing.dispose();
     }
     baseNoiseTexture.dispose();
+    splashTexture.dispose();
     lakeMat.dispose();
     lake.dispose();
   }
@@ -326,6 +416,7 @@ export function createLake(scene: Scene, lakeConfig: LakeConfig): LakeSystem {
     mesh: lake,
     material: lakeMat,
     update,
+    spawnRippleAt,
     dispose,
   };
 }

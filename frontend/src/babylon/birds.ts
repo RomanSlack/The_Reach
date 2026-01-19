@@ -42,6 +42,7 @@ interface Bird {
 
 export interface BirdSystem {
   update: (deltaTime: number) => void;
+  scareNearby: (x: number, z: number, radius: number) => void;
   dispose: () => void;
 }
 
@@ -421,6 +422,27 @@ export async function createBirdSystem(
   }
 
   // ===========================================
+  // SCARE NEARBY BIRDS
+  // ===========================================
+  function scareNearby(x: number, z: number, radius: number) {
+    for (const bird of birds) {
+      // Only scare birds that are floating on water
+      if (bird.state !== 'floating') continue;
+
+      const dx = bird.position.x - x;
+      const dz = bird.position.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+
+      if (dist < radius) {
+        // Bird is within scare radius - make it fly away immediately
+        const { target, state, treeIndex } = pickNewTarget(bird);
+        startFlight(bird, target, state, treeIndex);
+        console.log(`[Birds] Bird scared at (${bird.position.x.toFixed(1)}, ${bird.position.z.toFixed(1)})`);
+      }
+    }
+  }
+
+  // ===========================================
   // DISPOSE
   // ===========================================
   function dispose() {
@@ -438,6 +460,7 @@ export async function createBirdSystem(
 
   return {
     update,
+    scareNearby,
     dispose,
   };
 }

@@ -6,6 +6,15 @@ Need to de-monolith the scene.ts for babylon and for future procedural complexit
 
 Need to have you be able to type the tasks or connect to ntoes like this where every newline is a task or something then have AI parse ig, or even just regex
 
+Need to have the objects not collide in camp and torch be on outside ring or something radius
+
+For the camps we need the sand for them, the ground splat texture mini biome perhaps. System setup for later,
+
+Be able to shake trees,
+
+Wind in trees and grass somehow
+
+Better tree models
 
 
 bro apparently this is the hardest thing oat for you to understand all we want to do is like lets say the scne spawns, ok so we take the algorithm with

@@ -31,6 +31,7 @@ interface Fish {
 
 export interface FishSystem {
   update: (deltaTime: number) => void;
+  attractToPoint: (x: number, z: number, radius: number) => void;
   dispose: () => void;
 }
 
@@ -360,6 +361,30 @@ export async function createFishSystem(
   }
 
   // ===========================================
+  // ATTRACT FISH TO POINT
+  // ===========================================
+  function attractToPoint(x: number, z: number, radius: number) {
+    for (const f of fish) {
+      const dx = f.position.x - x;
+      const dz = f.position.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+
+      if (dist < radius) {
+        // Fish is within attract radius - make it dart toward the point
+        f.behavior = 'darting';
+        f.behaviorTimer = 0;
+        f.behaviorDuration = 1.5 + Math.random() * 1; // Dart for 1.5-2.5 seconds
+        f.speed = DART_SPEED_MIN + Math.random() * (DART_SPEED_MAX - DART_SPEED_MIN);
+
+        // Target position near the click point but at fish's current depth
+        const depthRange = getSwimDepthRange(x, z);
+        const targetY = Math.max(depthRange.min, Math.min(depthRange.max, f.position.y));
+        f.targetPosition = new Vector3(x, targetY, z);
+      }
+    }
+  }
+
+  // ===========================================
   // DISPOSE
   // ===========================================
   function dispose() {
@@ -374,6 +399,7 @@ export async function createFishSystem(
 
   return {
     update,
+    attractToPoint,
     dispose,
   };
 }
