@@ -34,6 +34,7 @@ import '@babylonjs/loaders/glTF';
 import type { Project } from '../api/client';
 import { generateTerrainHeight, distanceToLake, getLakeRadiusAtAngle, getWaterLevel, type LakeConfig } from './terrain';
 import { createCloudShadows } from './cloudShadows';
+import { createLake } from './lake';
 
 export interface ReachScene {
   scene: Scene;
@@ -1443,84 +1444,17 @@ export function createReachScene(
   console.log(`[Performance] Draw calls reduced from ~${(treePositions.length * 7) + (pinePositions.length * 4) + (bushPositions.length * 4) + totalRocks} to ~6`);
 
   // ===========================================
-  // LAKE WATER
+  // LAKE WATER (separate module)
   // ===========================================
-  // Simple disc at the water level from terrain.ts
+  const lakeSystem = createLake(scene, lakeConfig);
 
-  const waterLevel = getWaterLevel(lakeConfig);
-
-  // Create a disc for the lake water - larger to fill edge gaps
-  const lake = MeshBuilder.CreateDisc('lake', {
-    radius: lakeConfig.radius * 1.15, // Larger to ensure full coverage
-    tessellation: 64,
-    sideOrientation: Mesh.DOUBLESIDE,
-  }, scene);
-
-  // Rotate to be horizontal and position at water level
-  lake.rotation.x = Math.PI / 2;
-  lake.position = new Vector3(lakeConfig.centerX, waterLevel, lakeConfig.centerZ);
-
-  // Light blue transparent lake water
-  const lakeMat = new StandardMaterial('lakeMat', scene);
-  lakeMat.diffuseColor = new Color3(0.3, 0.55, 0.7); // Light blue
-  lakeMat.specularColor = new Color3(0.8, 0.9, 1.0);
-  lakeMat.specularPower = 128;
-  lakeMat.alpha = 0.55; // More see-through
-  lakeMat.backFaceCulling = false;
-
-  // Create noise texture for water surface ripples
-  const noiseSize = 256;
-  const noiseTex = new DynamicTexture('waterNoise', noiseSize, scene, true);
-  const noiseCtx = noiseTex.getContext() as CanvasRenderingContext2D;
-
-  // Generate Perlin-like noise pattern
-  const noiseData = noiseCtx.createImageData(noiseSize, noiseSize);
-  for (let y = 0; y < noiseSize; y++) {
-    for (let x = 0; x < noiseSize; x++) {
-      const idx = (y * noiseSize + x) * 4;
-      // Multi-octave noise for natural look
-      let noise = 0;
-      let amp = 1;
-      let freq = 1;
-      for (let o = 0; o < 4; o++) {
-        const nx = x * freq / 30;
-        const ny = y * freq / 30;
-        noise += (Math.sin(nx * 12.9898 + ny * 78.233) * 43758.5453 % 1) * amp;
-        amp *= 0.5;
-        freq *= 2;
-      }
-      noise = noise / 2 + 0.5; // Normalize to 0-1
-      const val = Math.floor(128 + noise * 60); // Light variation around mid-gray
-      noiseData.data[idx] = val;
-      noiseData.data[idx + 1] = val + 10; // Slight blue tint
-      noiseData.data[idx + 2] = val + 20;
-      noiseData.data[idx + 3] = 255;
-    }
-  }
-  noiseCtx.putImageData(noiseData, 0, 0);
-  noiseTex.update();
-  noiseTex.wrapU = Texture.WRAP_ADDRESSMODE;
-  noiseTex.wrapV = Texture.WRAP_ADDRESSMODE;
-
-  lakeMat.bumpTexture = noiseTex;
-  (lakeMat.bumpTexture as Texture).level = 0.3; // Subtle bump
-  (lakeMat.bumpTexture as Texture).uScale = 8;
-  (lakeMat.bumpTexture as Texture).vScale = 8;
-
-  // Slight emissive for water glow
-  lakeMat.emissiveColor = new Color3(0.05, 0.1, 0.15);
-
-  lake.material = lakeMat;
-
-  // Animate the noise texture UV for ripple movement
-  let rippleTime = 0;
+  // Update lake ripples each frame
+  let lastTime = performance.now();
   scene.onBeforeRenderObservable.add(() => {
-    rippleTime += 0.0003;
-    if (lakeMat.bumpTexture) {
-      // Slow drifting motion
-      (lakeMat.bumpTexture as Texture).uOffset = Math.sin(rippleTime) * 0.1 + rippleTime * 0.02;
-      (lakeMat.bumpTexture as Texture).vOffset = Math.cos(rippleTime * 0.7) * 0.1 + rippleTime * 0.015;
-    }
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    lastTime = currentTime;
+    lakeSystem.update(deltaTime);
   });
 
   // ===========================================
