@@ -1579,7 +1579,7 @@ export function createReachScene(
       console.error('[Scene] Failed to initialize fish system:', err);
     });
 
-  // Update lake, birds, sheep, and fish each frame
+  // Update lake, birds, sheep, fish each frame
   let lastTime = performance.now();
   scene.onBeforeRenderObservable.add(() => {
     const currentTime = performance.now();
@@ -1831,6 +1831,7 @@ export function createReachScene(
         birdSystem?.scareNearby(clickX, clickZ, 15); // Scare birds within 15 units
         fishSystem?.attractToPoint(clickX, clickZ, 25); // Attract fish within 25 units
       }
+
     }
   });
 
