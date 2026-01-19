@@ -1781,6 +1781,12 @@ export function createReachScene(
   // POINTER HANDLING
   // ===========================================
   scene.onPointerObservable.add((pointerInfo: PointerInfo) => {
+    // Only do expensive picking when needed (placement/move mode or clicks)
+    const needsPick = placementMode.active || moveMode.active ||
+                      pointerInfo.type === PointerEventTypes.POINTERDOWN;
+
+    if (!needsPick) return; // Skip picking during camera rotation
+
     const pickResult = scene.pick(scene.pointerX, scene.pointerY, (mesh) => mesh === ground);
     const groundPos = pickResult?.pickedPoint;
 
