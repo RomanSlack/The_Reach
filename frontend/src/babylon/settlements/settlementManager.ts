@@ -19,7 +19,6 @@ import {
   ShadowGenerator,
   HighlightLayer,
   GlowLayer,
-  PointLight,
 } from '@babylonjs/core';
 import type { Project } from '../../api/client';
 import {
@@ -49,8 +48,6 @@ export class SettlementManager {
 
   private settlements: Map<number, Settlement> = new Map();
   private settlementFires: Map<number, FireEffect[]> = new Map(); // Fire effects per settlement
-  private settlementTentLights: Map<number, PointLight[]> = new Map(); // Tent interior lights per settlement
-  private tentLightsEnabled: boolean = false; // Off during day, on at night
   private selectedId: number | null = null;
   private initialized: boolean = false;
 
@@ -127,12 +124,9 @@ export class SettlementManager {
       const worldZ = project.position_z + slot.localZ;
       const terrainY = this.terrainSampler.getHeight(worldX, worldZ);
 
-      // Get asset definition for yOffset
-      // Scale the yOffset by the total scale (baseScale * slotScale) to compensate for scaled model offsets
+      // Simple fixed offset from terrain height
       const assetDef = CAMP_ASSETS[slot.type];
-      const totalScale = (assetDef?.baseScale ?? 1) * slot.scale;
-      const scaledYOffset = (assetDef?.yOffset ?? 0) * totalScale;
-      const finalY = terrainY + scaledYOffset;
+      const finalY = terrainY + (assetDef?.yOffset ?? 0);
 
       // Create asset instance
       const instance = createAssetInstance(
@@ -170,41 +164,21 @@ export class SettlementManager {
           });
         }
 
-        // Apply project color to tent fabric and add interior light
-        if (slot.type === CampAssetType.Tent) {
-          if (project.color) {
-            instance.meshes.forEach(mesh => {
-              // Find the tent fabric material (named "Material.001" in Blender)
-              if (mesh.material && mesh.material.name.includes('Material.001')) {
-                // Clone the material so we don't affect other tent instances
-                const coloredMat = mesh.material.clone(`tent_fabric_${project.id}`);
-                if (coloredMat instanceof PBRMaterial) {
-                  coloredMat.albedoColor = Color3.FromHexString(project.color);
-                } else if (coloredMat instanceof StandardMaterial) {
-                  coloredMat.diffuseColor = Color3.FromHexString(project.color);
-                }
-                mesh.material = coloredMat;
+        // Apply project color to tent fabric
+        if (slot.type === CampAssetType.Tent && project.color) {
+          instance.meshes.forEach(mesh => {
+            // Find the tent fabric material (named "Material.001" in Blender)
+            if (mesh.material && mesh.material.name.includes('Material.001')) {
+              // Clone the material so we don't affect other tent instances
+              const coloredMat = mesh.material.clone(`tent_fabric_${project.id}`);
+              if (coloredMat instanceof PBRMaterial) {
+                coloredMat.albedoColor = Color3.FromHexString(project.color);
+              } else if (coloredMat instanceof StandardMaterial) {
+                coloredMat.diffuseColor = Color3.FromHexString(project.color);
               }
-            });
-          }
-
-          // Create interior light for night mode (warm lantern glow)
-          const tentLight = new PointLight(
-            `tentLight_${project.id}_${placedAssets.length}`,
-            new Vector3(slot.localX, finalY + 1.2, slot.localZ), // Inside tent, slightly elevated
-            this.scene
-          );
-          tentLight.parent = rootNode;
-          tentLight.diffuse = new Color3(1.0, 0.75, 0.4); // Warm lantern color
-          tentLight.specular = new Color3(0.5, 0.35, 0.15);
-          tentLight.intensity = this.tentLightsEnabled ? 0.6 : 0; // Off during day
-          tentLight.range = 6; // Small radius, just inside tent
-
-          // Track tent lights for this settlement
-          if (!this.settlementTentLights.has(project.id)) {
-            this.settlementTentLights.set(project.id, []);
-          }
-          this.settlementTentLights.get(project.id)!.push(tentLight);
+              mesh.material = coloredMat;
+            }
+          });
         }
 
         // Apply brightened project color to banner
@@ -459,13 +433,6 @@ export class SettlementManager {
       this.settlementFires.delete(projectId);
     }
 
-    // Remove tent lights
-    const tentLights = this.settlementTentLights.get(projectId);
-    if (tentLights) {
-      tentLights.forEach(light => light.dispose());
-      this.settlementTentLights.delete(projectId);
-    }
-
     // Remove from highlight layer
     if (this.highlightLayer) {
       settlement.placedAssets.forEach(asset => {
@@ -647,20 +614,6 @@ export class SettlementManager {
    */
   setFireIntensityMultiplier(multiplier: number): void {
     this.fireManager.setIntensityMultiplier(multiplier);
-  }
-
-  /**
-   * Enable/disable tent interior lights (for night mode)
-   */
-  setTentLightsEnabled(enabled: boolean): void {
-    this.tentLightsEnabled = enabled;
-    const intensity = enabled ? 0.6 : 0;
-
-    this.settlementTentLights.forEach(lights => {
-      lights.forEach(light => {
-        light.intensity = intensity;
-      });
-    });
   }
 
   // ==========================================

@@ -21,6 +21,7 @@ export async function createEngine(canvas: HTMLCanvasElement): Promise<Engine> {
   const engine = new Engine(canvas, true, {
     preserveDrawingBuffer: true,
     stencil: true,
+    disableUniformBuffers: true, // Allows more lights by avoiding UBO limits
   });
   console.log('Using WebGL renderer');
   return engine;

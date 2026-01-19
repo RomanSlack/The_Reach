@@ -81,7 +81,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
     type: CampAssetType.Crate,
     path: '/models/camp_1/crate_1.glb',
     baseScale: 3.0,
-    yOffset: -0.05, // Model space offset, scaled by baseScale at runtime
+    yOffset: -0.3, // Sink into terrain
     castsShadow: true,
     receivesShadow: true,
     isPickable: true,
@@ -108,7 +108,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
     type: CampAssetType.RockSmall,
     path: '/models/camp_1/rock_1.glb',
     baseScale: 3.0,
-    yOffset: -0.1, // Model space offset, scaled by baseScale at runtime
+    yOffset: -0.5, // Embed into terrain
     castsShadow: true,
     receivesShadow: true,
     isPickable: false,
@@ -117,7 +117,7 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
     type: CampAssetType.RockLarge,
     path: '/models/camp_1/rock_2.glb',
     baseScale: 3.0,
-    yOffset: -0.15, // Model space offset, scaled by baseScale at runtime
+    yOffset: -0.6, // Embed deeper into terrain
     castsShadow: true,
     receivesShadow: true,
     isPickable: false,
