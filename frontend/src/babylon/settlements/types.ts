@@ -40,6 +40,7 @@ export enum CampAssetType {
   Campfire = 'campfire',
   Crate = 'crate',
   TorchStand = 'torch',
+  Banner = 'banner',
   RockSmall = 'rock_small',
   RockLarge = 'rock_large',
 }
@@ -88,6 +89,15 @@ export const CAMP_ASSETS: Record<CampAssetType, AssetDefinition> = {
   [CampAssetType.TorchStand]: {
     type: CampAssetType.TorchStand,
     path: '/models/camp_1/tall_torch_1.glb',
+    baseScale: 3.0,
+    yOffset: 0,
+    castsShadow: true,
+    receivesShadow: true,
+    isPickable: true,
+  },
+  [CampAssetType.Banner]: {
+    type: CampAssetType.Banner,
+    path: '/models/camp_1/banner_1.glb',
     baseScale: 3.0,
     yOffset: 0,
     castsShadow: true,

@@ -86,6 +86,7 @@ interface CampConfig {
   crateMinRadius: number;       // Crates near tents
   crateMaxRadius: number;
   torchRadius: number;          // Torches at camp perimeter
+  bannerRadius: number;         // Banner near tents, facing campfire
   rockMinRadius: number;        // Rocks scattered throughout
   rockMaxRadius: number;
 
@@ -107,11 +108,12 @@ const DEFAULT_CAMP_CONFIG: CampConfig = {
   campfireRadius: 0,           // Campfire always at center
   tentMinRadius: 2.5,          // Tents very close to fire
   tentMaxRadius: 3.5,
-  crateMinRadius: 1.5,         // Crates very close, near campfire
-  crateMaxRadius: 3,
+  crateMinRadius: 3,         // Crates very close, near campfire
+  crateMaxRadius: 5,
   torchRadius: 4,              // Torches at camp edge
-  rockMinRadius: 1,            // Rocks scattered throughout
-  rockMaxRadius: 4,
+  bannerRadius: 2.8,           // Banner in tent ring, facing campfire
+  rockMinRadius: 4,            // Rocks scattered throughout
+  rockMaxRadius: 6,
 
   positionJitter: 0.3,         // Small random offset
   rotationJitter: Math.PI / 8, // ±22.5 degrees
@@ -322,7 +324,30 @@ export function generateCampLayout(
   }
 
   // ===========================================
-  // 5. ROCKS - Scattered decoration
+  // 5. BANNER - One per camp, facing campfire
+  // ===========================================
+  {
+    // Place banner at a random angle, in the tent ring area
+    const bannerAngle = rng.range(0, Math.PI * 2);
+    const pos = generateCircularPosition(rng, bannerAngle, config.bannerRadius, config);
+
+    // Banner faces +Z in Babylon (from Blender +Y forward)
+    // To face campfire at (0,0), rotate to point toward center
+    const faceAngle = Math.atan2(-pos.x, -pos.z);
+
+    slots.push({
+      type: CampAssetType.Banner,
+      localX: pos.x,
+      localZ: pos.z,
+      rotation: faceAngle,
+      scale: 1, // Same scale as tent (baseScale handles it)
+      required: true, // Always show banner
+    });
+    placedPositions.push({ x: pos.x, z: pos.z, type: CampAssetType.Banner });
+  }
+
+  // ===========================================
+  // 6. ROCKS - Scattered decoration
   // ===========================================
   const rockTypes = [
     { type: CampAssetType.RockSmall, count: counts.rocksSmall },

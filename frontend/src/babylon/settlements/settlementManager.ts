@@ -181,6 +181,32 @@ export class SettlementManager {
           });
         }
 
+        // Apply brightened project color to banner
+        if (slot.type === CampAssetType.Banner && project.color) {
+          instance.meshes.forEach(mesh => {
+            // Find the banner material (named "Banner_Material" in Blender)
+            if (mesh.material && mesh.material.name.includes('Banner_Material')) {
+              // Clone the material so we don't affect other banner instances
+              const coloredMat = mesh.material.clone(`banner_fabric_${project.id}`);
+
+              // Brighten the color for the banner (more saturated/vibrant)
+              const baseColor = Color3.FromHexString(project.color);
+              const brightenedColor = new Color3(
+                Math.min(1, baseColor.r * 1.15 + 0.1),
+                Math.min(1, baseColor.g * 1.15 + 0.1),
+                Math.min(1, baseColor.b * 1.15 + 0.1)
+              );
+
+              if (coloredMat instanceof PBRMaterial) {
+                coloredMat.albedoColor = brightenedColor;
+              } else if (coloredMat instanceof StandardMaterial) {
+                coloredMat.diffuseColor = brightenedColor;
+              }
+              mesh.material = coloredMat;
+            }
+          });
+        }
+
         // Add fire effects to campfires and torches
         if (slot.type === CampAssetType.Campfire) {
           const fire = this.fireManager.addCampfire(
