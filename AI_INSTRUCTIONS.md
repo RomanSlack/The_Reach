@@ -51,6 +51,17 @@ The_Reach/
 - No drag-to-move - click to select, use move button, click to place
 - Ghost preview follows cursor with terrain height
 
+### Code Organization
+- **Keep `scene.ts` lean** - do not bloat it with large features
+- New features or systems should go in separate folders/files under `src/babylon/`
+- Example: The settlement system lives in `src/babylon/settlements/` with its own modules:
+  - `types.ts` - Type definitions and constants
+  - `assetLoader.ts` - GLB asset loading and caching
+  - `campGenerator.ts` - Procedural layout generation
+  - `settlementManager.ts` - Main orchestrator
+  - `index.ts` - Public exports
+- Import and integrate these modules into `scene.ts` rather than writing everything inline
+
 ## Style Guidelines
 
 ### UI Design

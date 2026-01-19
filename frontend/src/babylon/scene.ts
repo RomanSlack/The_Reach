@@ -36,6 +36,7 @@ import { generateTerrainHeight, distanceToLake, getLakeRadiusAtAngle, getWaterLe
 import { createCloudShadows } from './cloudShadows';
 import { createLake } from './lake';
 import { createSettlementManager, type SettlementManager } from './settlements';
+import { createBirdSystem, type BirdSystem } from './birds';
 
 export interface ReachScene {
   scene: Scene;
@@ -1471,13 +1472,29 @@ export function createReachScene(
   // ===========================================
   const lakeSystem = createLake(scene, lakeConfig);
 
-  // Update lake ripples each frame
+  // ===========================================
+  // AMBIENT BIRDS
+  // ===========================================
+  let birdSystem: BirdSystem | null = null;
+
+  // Initialize birds asynchronously (needs tree positions)
+  createBirdSystem(scene, treePositions, pinePositions, lakeConfig)
+    .then(system => {
+      birdSystem = system;
+      console.log('[Scene] Bird system ready');
+    })
+    .catch(err => {
+      console.error('[Scene] Failed to initialize bird system:', err);
+    });
+
+  // Update lake and birds each frame
   let lastTime = performance.now();
   scene.onBeforeRenderObservable.add(() => {
     const currentTime = performance.now();
     const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
     lastTime = currentTime;
     lakeSystem.update(deltaTime);
+    birdSystem?.update(deltaTime);
   });
 
   // ===========================================
@@ -1730,6 +1747,7 @@ export function createReachScene(
     dispose: () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      birdSystem?.dispose();
       settlementManager?.dispose();
       pipeline.dispose();
       glowLayer.dispose();

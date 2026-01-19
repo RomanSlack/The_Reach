@@ -3,7 +3,8 @@ import { createEngine } from '../babylon/engine';
 import { createReachScene } from '../babylon/scene';
 import type { ReachScene } from '../babylon/scene';
 import { useProjectStore } from '../stores/projectStore';
-import type { Engine } from '@babylonjs/core';
+import type { Engine, Scene } from '@babylonjs/core';
+import { DebugOverlay } from './DebugOverlay';
 
 export function BabylonCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -14,6 +15,7 @@ export function BabylonCanvas() {
   const [targetProgress, setTargetProgress] = useState(10); // Start with initial target so bar moves immediately
   const [displayProgress, setDisplayProgress] = useState(0);
   const [showOverlay, setShowOverlay] = useState(true);
+  const [debugScene, setDebugScene] = useState<Scene | null>(null);
 
   const {
     projects,
@@ -74,6 +76,7 @@ export function BabylonCanvas() {
       // Wait for scene to be ready
       await reachScene.scene.whenReadyAsync();
       setTargetProgress(90);
+      setDebugScene(reachScene.scene);
 
       engine.runRenderLoop(() => {
         reachScene.scene.render();
@@ -208,6 +211,9 @@ export function BabylonCanvas() {
           </div>
         </div>
       )}
+
+      {/* Debug Overlay - FPS and metrics */}
+      {!loading && <DebugOverlay scene={debugScene} />}
     </>
   );
 }
