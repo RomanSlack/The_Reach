@@ -810,37 +810,37 @@ export function createReachScene(
   // ===========================================
   // STARS (visible at night)
   // ===========================================
+  const stars: Mesh[] = [];
   const starMat = new StandardMaterial('starMat', scene);
-  starMat.emissiveColor = new Color3(1, 1, 1);
+  starMat.emissiveColor = new Color3(3, 3, 3); // HDR bright
   starMat.disableLighting = true;
   starMat.alpha = 0; // Hidden during day
 
-  // Create a parent node for all stars that follows the camera
-  const starsParent = new TransformNode('starsParent', scene);
-
   // Create stars distributed on a sphere
   const starCount = 1000;
-  const starRadius = 300;
+  const starRadius = 450; // Inside the sky sphere
   for (let i = 0; i < starCount; i++) {
-    // Random position on sphere
+    // Random position on sphere using spherical coordinates
     const theta = Math.random() * Math.PI * 2;
-    const phi = Math.random() * Math.PI * 0.5; // Upper hemisphere only
+    const phi = Math.acos(2 * Math.random() - 1);
+    // Stars from zenith down to near horizon
+    if (phi > Math.PI * 0.6) continue;
 
     const x = starRadius * Math.sin(phi) * Math.cos(theta);
     const y = starRadius * Math.cos(phi);
     const z = starRadius * Math.sin(phi) * Math.sin(theta);
 
-    const starSize = 2 + Math.random() * 3;
+    const starSize = 1.5 + Math.random() * 2.5; // 1.5 to 4.0 diameter
     const star = MeshBuilder.CreateSphere(`star_${i}`, { diameter: starSize, segments: 4 }, scene);
     star.position = new Vector3(x, y, z);
     star.material = starMat;
-    star.parent = starsParent;
-  }
+    star.applyFog = false;
+    star.infiniteDistance = true;
+    stars.push(star);
 
-  // Make stars follow camera position each frame
-  scene.onBeforeRenderObservable.add(() => {
-    starsParent.position.copyFrom(camera.position);
-  });
+    // Add to glow layer for bright effect
+    glowLayer.addIncludedOnlyMesh(star);
+  }
 
   // ===========================================
   // GOD RAYS (Volumetric Light Scattering)
