@@ -62,6 +62,9 @@ export function createReachScene(
   scene.fogDensity = 0.0006; // Light fog
   scene.fogColor = new Color3(0.4, 0.6, 0.85); // Blue fog matching sky
 
+  // Performance optimizations
+  scene.skipPointerMovePicking = true; // Only pick on click, not every frame
+
   // ===========================================
   // STRATEGIC CAMERA
   // ===========================================
@@ -1461,6 +1464,17 @@ export function createReachScene(
   rockTemplate3.thinInstanceSetBuffer('matrix', rock3Matrices, 16);
   rockTemplate3.receiveShadows = true;
   shadowGenerator.addShadowCaster(rockTemplate3);
+
+  // Freeze world matrices for static vegetation (major performance gain)
+  treeTrunkTemplate.freezeWorldMatrix();
+  treeFoliageTemplate.freezeWorldMatrix();
+  pineTrunkTemplate.freezeWorldMatrix();
+  pineFoliageTemplate?.freezeWorldMatrix();
+  bushTemplate.freezeWorldMatrix();
+  rockTemplate1.freezeWorldMatrix();
+  rockTemplate2.freezeWorldMatrix();
+  rockTemplate3.freezeWorldMatrix();
+  ground.freezeWorldMatrix();
 
   // Log performance info
   const totalRocks = rockPositions.length + lakeshoreRockPositions.length;
