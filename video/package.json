@@ -1,0 +1,22 @@
+{
+  "name": "the-reach-video",
+  "version": "1.0.0",
+  "description": "Promo video for The Reach - 3D Project Scape",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "remotion studio",
+    "build": "remotion render TheReachVideo out/TheReach.mp4",
+    "build:gif": "remotion render TheReachVideo out/TheReach.gif"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "typescript": "^5.0.0"
+  }
+}
